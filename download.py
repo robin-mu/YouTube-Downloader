@@ -4,16 +4,20 @@ from mutagen.id3 import ID3, TIT2, TPE1, TPUB
 import os
 import tkinter
 from tkinter import *
+from tkinter import filedialog
 from tkinter import ttk
 from tkinter.scrolledtext import ScrolledText
 from datetime import datetime
 import json
+import shutil
 from pprint import pprint
 
 class Globals:
+    folder = '' # folder to sync with
     files = []
     current_file = {}
-    already_finished = [] # list of IDs of videos that are already present in the output folder and where metadata has been set
+    already_finished = {} # dict of IDs and filenames of videos that are already present in the output folder and where metadata has been set
+    dont_delete = [] # list of filenames that are already downloaded but still in the playlist so they shouldn't be deleted when syncing
     start = datetime.now()
     metadata_file = {}
 
@@ -98,7 +102,7 @@ def generate_metadata_choices(metadata):
                 artist_choices.append(split[i].strip())
             break
 
-    for sep in ['"', "'", '“']
+    for sep in ['"', "'", '“']:
         if sep in title:
             title_choices.append(title.split(sep)[1])
     
@@ -171,7 +175,7 @@ def apply_metadata(id, artist, title):
     except MutagenError as e:
         print_error('mutagen', e)
     except OSError as e:
-        print_error('windows', e)
+        print_error('OS', e)
     
     Globals.metadata_file[id] = [artist, title]
 
@@ -180,14 +184,32 @@ def reset():
     with open('metadata.json', 'w') as f:
         json.dump(Globals.metadata_file, f)
     
+    # move files to output folder if one has been specified
+    if Globals.folder:
+        for f in os.listdir('out'):
+            try:
+                if f.split('.')[-1] == 'mp3':
+                    shutil.move(os.path.join('out', f), os.path.join(Globals.folder, f))
+                    print_error('sync', f'Moving {f} to output folder')
+                else:
+                    os.remove(os.path.join('out', f))
+                    print_error('sync', f'Deleting {f}')
+            except OSError as e:
+                print_error('OS', e)
+            
+
+
+    Globals.folder = ''
     Globals.files = []
     Globals.current_file = {}
-    Globals.already_finished = []
+    Globals.already_finished = {}
+    Globals.dont_delete = []
     Globals.metadata_file = {}
     
     url_entry.state(['!disabled'])
     url_entry.delete(0, 'end')
     download_button.state(['!disabled'])
+    sync_button.state(['!disabled'])
     artist_combobox.set('')
     title_combobox.set('')
     artist_combobox['values'] = []
@@ -230,19 +252,22 @@ def download():
     Globals.start = datetime.now()
     
     download_button.state(['disabled'])
+    sync_button.state(['disabled'])
     url_entry.state(['disabled'])
     
     # add IDs of already finished files to a list
-    Globals.already_finished = []
-    for f in os.listdir('out'):
-        if f.split('.')[-1] == 'mp3':
-            try:
-                id3 = ID3(os.path.join('out', f))
-                video_id = id3.getall('TPUB')[0].text[0]
-                if video_id:
-                    Globals.already_finished.append(video_id)
-            except IndexError as e:
-                print(f'{f} has no TPUB-Frame set')
+    Globals.already_finished = {}
+    folder = Globals.folder
+    if folder:
+        for f in os.listdir(folder):
+            if f.split('.')[-1] == 'mp3':
+                try:
+                    id3 = ID3(os.path.join(folder, f))
+                    video_id = id3.getall('TPUB')[0].text[0]
+                    if video_id:
+                        Globals.already_finished[video_id] = f
+                except IndexError as e:
+                    print(f'{f} has no TPUB-Frame set')
 
     ydl_opts = {
         'format': 'bestaudio/best',
@@ -265,6 +290,7 @@ def download():
     # reset if info is empty
     if not info:
         download_button.state(['!disabled'])
+        sync_button.state(['!disabled'])
         url_entry.state(['!disabled'])
         url_entry.delete(0, 'end')
         progress.set('')
@@ -275,7 +301,7 @@ def download():
     # check which videos haven't been downloaded
     def get_not_downloaded(info):
         results = []
-        
+
         if '_type' in info:
             if info['_type'] == 'playlist':
                 for entry in info['entries']:
@@ -302,13 +328,24 @@ def download():
             print_error('download', f)
     
     progress_bar.set(0)
-    
+
     time = (datetime.now() - Globals.start).seconds
     progress.set(f"Downloaded {len(Globals.files)} video{'s' if len(Globals.files) != 1 else ''} in {time // 60}:{'0' if (time % 60) < 10 else ''}{time % 60}")
     
+    # delete all files from the destination folder that are not in the dont_download list (which means they were removed from the playlist)
+    if Globals.already_finished and Globals.folder:
+        for f in Globals.already_finished.values():
+            if not f in Globals.dont_delete:
+                try:
+                    os.remove(os.path.join(Globals.folder, f))
+                    print_error('sync', f'Deleting {f}')
+                except OSError as e:
+                    print_error('sync', e)
+
     # don't start setting metadata if the files list is empty
     if not Globals.files:
         download_button.state(['!disabled'])
+        sync_button.state(['!disabled'])
         url_entry.state(['!disabled'])
         url_entry.delete(0, 'end')
         progress.set('')
@@ -332,6 +369,7 @@ def download():
         metadata_button.state(['!disabled'])
     else:
         download_button.state(['!disabled'])
+        sync_button.state(['!disabled'])
         url_entry.state(['!disabled'])
         url_entry.delete(0, 'end')
         progress.set('')
@@ -360,8 +398,9 @@ def hook(d):
     Tk.update(root)
     
 def get_info_dict(info_dict):
-    # don't download and don't add to files list if file is already present and metadata has already been set
+    # don't download and don't add to files list if file is already present and metadata has already been set, don't delete that file when syncing
     if info_dict['id'] in Globals.already_finished:
+        Globals.dont_delete.append(Globals.already_finished[info_dict['id']])
         print_error('download', f"{info_dict['id']}: File with metadata already present")
         return f"{info_dict['id']}: File with metadata already present"
     
@@ -379,6 +418,9 @@ def get_info_dict(info_dict):
         print_error('download', f"{info_dict['id']}: File already present")
         return f"{info_dict['id']}: File already present"
     
+def sync_folder():
+    Globals.folder = tkinter.filedialog.askdirectory()
+
 def swap():
     temp = artist_combobox.get()
     artist_combobox.set(title_combobox.get())
@@ -405,6 +447,7 @@ metadata_file_variable = StringVar()
 
 url_label = ttk.Label(frame, text='Input video/playlist URL here:')
 url_entry = ttk.Entry(frame)
+sync_button = ttk.Button(frame, text='Select folder to sync with', command=sync_folder)
 download_button = ttk.Button(frame, text='Download', command=download)
 progress_label = ttk.Label(frame, text='', textvariable=progress)
 download_progress = ttk.Progressbar(frame, orient=HORIZONTAL, mode='determinate', variable=progress_bar)
@@ -425,7 +468,8 @@ error_text = ScrolledText(frame, wrap=tkinter.WORD, height=10, state='disabled')
 frame.grid(row=0, column=0, sticky=(N, E, W))
 url_label.grid(row=0, column=0, columnspan=width)
 url_entry.grid(row=1, column=0, columnspan=width, sticky=(E, W))
-download_button.grid(row=2, column=0, columnspan=width, pady=(5, 0))
+sync_button.grid(row=2, column=0, columnspan=width // 3, pady=(5, 0))
+download_button.grid(row=2, column=width // 3, columnspan=width // 3, pady=(5, 0))
 download_progress.grid(row=3, column=0, columnspan=width, sticky=(E, W))
 progress_label.grid(row=4, column=0, columnspan=width)
 video_label.grid(row=5, column=0, columnspan=width)
