@@ -149,10 +149,16 @@ def update_combobox(from_start):
             video_text += f" ({file['playlist_index']}/{file['playlist_length']})"
         video.set(video_text)
         
-        artist_combobox.set(Globals.current_file['artist'][0])
-        title_combobox.set(Globals.current_file['title'][0])
-        artist_combobox['values'] = Globals.current_file['artist']
-        title_combobox['values'] = Globals.current_file['title']
+        if metadata_mode.get() == 'vgm' and swap_variable.get() == '1':
+            artist_combobox['values'] = Globals.current_file['title']
+            title_combobox['values'] = Globals.current_file['artist']
+            artist_combobox.set(Globals.current_file['title'][0])
+            title_combobox.set(Globals.current_file['artist'][0])
+        else:
+            artist_combobox['values'] = Globals.current_file['artist']
+            title_combobox['values'] = Globals.current_file['title']
+            artist_combobox.set(Globals.current_file['artist'][0])
+            title_combobox.set(Globals.current_file['title'][0])
     else:
         reset()
 
@@ -432,18 +438,59 @@ def capitalize_artist():
 def capitalize_title():
     title_combobox.set(title_combobox.get().title())
 
+def swap_permanently():
+    temp = artist_combobox.get()
+    artist_combobox.set(title_combobox.get())
+    title_combobox.set(temp)
+
+    temp = artist_combobox['values']
+    artist_combobox['values'] = title_combobox['values']
+    title_combobox['values'] = temp
+
+def update_metadata_mode():
+    mode = metadata_mode.get()
+    if mode == 'normal':
+        vgm_album_label.grid_forget()
+        vgm_album_combobox.grid_forget()
+        vgm_track_label.grid_forget()
+        vgm_track_entry.grid_forget()
+        vgm_swap_checkbutton.grid_forget()
+
+        swap_button.grid(row=7, column=width // 3, columnspan=width // 3, sticky=(E, W), padx=(5, 5))
+    elif mode == 'vgm':
+        vgm_album_label.grid(row=9, column=0, columnspan=width // 3)
+        vgm_album_combobox.grid(row=10, column=0, columnspan=width // 3, sticky=(E,W))
+        vgm_track_label.grid(row=9, column=width // 3 * 2, columnspan=width // 3)
+        vgm_track_entry.grid(row=10, column=width // 3 * 2, columnspan=width // 3, sticky=(E,W))
+        swap_button.grid_forget()
+        vgm_swap_checkbutton.grid(row=7, column=width // 3, columnspan=width // 3, sticky=(E, W), padx=(5, 5))
+
 root = Tk()
 root.title('YouTube to MP3 Converter')
 root.geometry('700x420')
+root.option_add('*tearOff', FALSE)
 
 frame = ttk.Frame(root, padding='3 10 12 12')
 
-width = 6 # number of columns
+# menu variables
+metadata_mode = StringVar()
+metadata_mode.set('normal')
 
+menubar = Menu(root)
+root['menu'] = menubar
+
+menu_metadata_mode = Menu(menubar)
+menubar.add_cascade(menu=menu_metadata_mode, label='Metadata Mode')
+menu_metadata_mode.add_radiobutton(label='Normal', variable=metadata_mode, command=update_metadata_mode, value='normal')
+menu_metadata_mode.add_radiobutton(label='VGM', variable=metadata_mode, command=update_metadata_mode, value='vgm')
+menu_metadata_mode.add_radiobutton(label='Classical', variable=metadata_mode, command=update_metadata_mode, value='classical')
+
+# widget variables
 progress = StringVar()
 progress_bar = DoubleVar()
 video = StringVar()
 metadata_file_variable = StringVar()
+swap_variable = StringVar()
 
 url_label = ttk.Label(frame, text='Input video/playlist URL here:')
 url_entry = ttk.Entry(frame)
@@ -465,6 +512,14 @@ metadata_button = ttk.Button(frame, text='Apply metadata', command=apply_metadat
 metadata_file_checkbutton = ttk.Checkbutton(frame, text='Apply metadata from metadata.json', variable=metadata_file_variable, command=apply_metadata_file)
 error_text = ScrolledText(frame, wrap=tkinter.WORD, height=10, state='disabled')
 
+vgm_album_label = ttk.Label(frame, text='Select the Album')
+vgm_album_combobox = ttk.Combobox(frame)
+vgm_track_label = ttk.Label(frame, text='Select the track number')
+vgm_track_entry = ttk.Entry(frame)
+vgm_swap_checkbutton = ttk.Checkbutton(frame, text='Swap title/artist', command=swap_permanently, variable=swap_variable)
+
+width = 6 # number of columns
+
 frame.grid(row=0, column=0, sticky=(N, E, W))
 url_label.grid(row=0, column=0, columnspan=width)
 url_entry.grid(row=1, column=0, columnspan=width, sticky=(E, W))
@@ -479,12 +534,12 @@ title_label.grid(row=6, column=width // 3 * 2, columnspan=width // 3)
 artist_combobox.grid(row=7, column=0, columnspan=width // 3, sticky=(E, W))
 swap_button.grid(row=7, column=width // 3, columnspan=width // 3, sticky=(E, W), padx=(5, 5))
 title_combobox.grid(row=7, column=width // 3 * 2, columnspan=width // 3, sticky=(E, W))
-capitalize_artist_button.grid(row=8, column=0, columnspan=width // 3, padx=(0, 5))
-capitalize_title_button.grid(row=8, column=width // 3 * 2, columnspan=width // 3, padx=(5, 0))
-metadata_auto_button.grid(row=9, column=0, columnspan=width // 3, pady=(5, 0))
-metadata_button.grid(row=9, column=width // 3, columnspan=width // 3, pady=(5, 0))
-metadata_file_checkbutton.grid(row=9, column=width // 3 * 2, columnspan=width // 3, pady=(5, 0))
-error_text.grid(row=10, column=0, columnspan=width, sticky=(E, W), pady=(5, 0))
+capitalize_artist_button.grid(row=8, column=0, columnspan=width // 3, padx=(0, 5), pady=(5, 0))
+capitalize_title_button.grid(row=8, column=width // 3 * 2, columnspan=width // 3, padx=(5, 0), pady=(5, 0))
+metadata_auto_button.grid(row=11, column=0, columnspan=width // 3, pady=(5, 0))
+metadata_button.grid(row=11, column=width // 3, columnspan=width // 3, pady=(5, 0))
+metadata_file_checkbutton.grid(row=11, column=width // 3 * 2, columnspan=width // 3, pady=(5, 0))
+error_text.grid(row=12, column=0, columnspan=width, sticky=(E, W), pady=(5, 0))
 
 url_entry.focus()
 
