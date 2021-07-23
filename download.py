@@ -1,6 +1,6 @@
 import youtube_dl
 from mutagen import MutagenError
-from mutagen.id3 import ID3, TIT2, TPE1, TPUB
+from mutagen.id3 import ID3, TIT2, TPE1, TPUB, TALB, TRCK, TCON
 import os
 import tkinter
 from tkinter import *
@@ -102,7 +102,7 @@ def generate_metadata_choices(metadata):
                 artist_choices.append(split[i].strip())
             break
 
-    for sep in ['"', "'", '“']:
+    for sep in ['"', '“']:
         if sep in title:
             title_choices.append(title.split(sep)[1])
     
@@ -118,6 +118,12 @@ def generate_metadata_choices(metadata):
     channel = metadata['channel']
     artist_choices.append(remove_brackets(channel))
     artist_choices.append(channel)
+
+    # VGM mode
+    if metadata_mode.get() == 'vgm':
+        for s in [' OST', ' Soundtrack', ' Original', ' Official', ' Music']:
+            artist_choices = [i.replace(s, '').strip() for i in artist_choices]
+            title_choices = [i.replace(s, '').strip() for i in title_choices]
     
     # remove empty and duplicate list entries
     choices['title'] = list(dict.fromkeys(filter(None, title_choices)))
@@ -149,16 +155,36 @@ def update_combobox(from_start):
             video_text += f" ({file['playlist_index']}/{file['playlist_length']})"
         video.set(video_text)
         
-        if metadata_mode.get() == 'vgm' and swap_variable.get() == '1':
-            artist_combobox['values'] = Globals.current_file['title']
-            title_combobox['values'] = Globals.current_file['artist']
-            artist_combobox.set(Globals.current_file['title'][0])
-            title_combobox.set(Globals.current_file['artist'][0])
-        else:
-            artist_combobox['values'] = Globals.current_file['artist']
-            title_combobox['values'] = Globals.current_file['title']
-            artist_combobox.set(Globals.current_file['artist'][0])
-            title_combobox.set(Globals.current_file['title'][0])
+        if metadata_mode.get() == 'vgm':
+            previous_artist = artist_combobox.get()
+            previous_album = vgm_album_combobox.get()
+
+        artist_combobox['values'] = Globals.current_file['artist']
+        title_combobox['values'] = Globals.current_file['title']
+        artist_combobox.set(Globals.current_file['artist'][0])
+        title_combobox.set(Globals.current_file['title'][0])
+
+        # VGM mode
+        if metadata_mode.get() == 'vgm':
+            if swap_variable.get() == '1':
+                artist_combobox['values'] = Globals.current_file['title']
+                title_combobox['values'] = Globals.current_file['artist']
+                artist_combobox.set(Globals.current_file['title'][0])
+                title_combobox.set(Globals.current_file['artist'][0])
+                
+            vgm_album_combobox.set(artist_combobox.get()  + ' OST')
+            vgm_album_combobox['values'] = [i + ' OST' for i in artist_combobox['values']]
+
+            if previous_artist:
+                artist_combobox.set(previous_artist)
+                artist_combobox['values'] += (previous_artist,)
+
+            if previous_album:
+                vgm_album_combobox.set(previous_album)
+                vgm_album_combobox['values'] += (previous_album,)
+
+            vgm_track_entry.delete(0, 'end')
+
     else:
         reset()
 
@@ -175,6 +201,13 @@ def apply_metadata(id, artist, title):
         id3.add(TPE1(text=artist))
         id3.add(TIT2(text=title))
         id3.add(TPUB(text=id))
+
+        # VGM Metadata
+        if metadata_mode.get() == 'vgm':
+            id3.add(TALB(text=vgm_album_combobox.get()))
+            id3.add(TRCK(text=vgm_track_entry.get()))
+            id3.add(TCON(text='VGM'))
+
         id3.save()
         
         os.rename(path, os.path.join('out', filename))
@@ -203,8 +236,6 @@ def reset():
             except OSError as e:
                 print_error('OS', e)
             
-
-
     Globals.folder = ''
     Globals.files = []
     Globals.current_file = {}
@@ -227,6 +258,12 @@ def reset():
     capitalize_title_button.state(['disabled'])
     metadata_auto_button.state(['disabled'])
     metadata_button.state(['disabled'])
+
+    # VGM mode
+    if metadata_mode.get() == 'vgm':
+        vgm_album_combobox.set('')
+        vgm_album_combobox['values'] = []
+        vgm_track_entry.delete(0, 'end')
 
 def apply_metadata_once():
     apply_metadata(Globals.current_file['id'], artist_combobox.get(), title_combobox.get())
@@ -465,9 +502,14 @@ def update_metadata_mode():
         swap_button.grid_forget()
         vgm_swap_checkbutton.grid(row=7, column=width // 3, columnspan=width // 3, sticky=(E, W), padx=(5, 5))
 
+def artist_combobox_write(*args):
+    if metadata_mode.get() == 'vgm':
+        artist = artist_combobox.get()
+        vgm_album_combobox.set(artist if artist.endswith(' OST') else artist + ' OST')
+
 root = Tk()
 root.title('YouTube to MP3 Converter')
-root.geometry('700x420')
+root.geometry('900x500')
 root.option_add('*tearOff', FALSE)
 
 frame = ttk.Frame(root, padding='3 10 12 12')
@@ -476,6 +518,15 @@ frame = ttk.Frame(root, padding='3 10 12 12')
 metadata_mode = StringVar()
 metadata_mode.set('normal')
 
+# widget variables
+progress = StringVar()
+progress_bar = DoubleVar()
+video = StringVar()
+metadata_file_variable = StringVar()
+swap_variable = StringVar()
+artist_combobox_content = StringVar()
+
+# menu
 menubar = Menu(root)
 root['menu'] = menubar
 
@@ -485,13 +536,7 @@ menu_metadata_mode.add_radiobutton(label='Normal', variable=metadata_mode, comma
 menu_metadata_mode.add_radiobutton(label='VGM', variable=metadata_mode, command=update_metadata_mode, value='vgm')
 menu_metadata_mode.add_radiobutton(label='Classical', variable=metadata_mode, command=update_metadata_mode, value='classical')
 
-# widget variables
-progress = StringVar()
-progress_bar = DoubleVar()
-video = StringVar()
-metadata_file_variable = StringVar()
-swap_variable = StringVar()
-
+# widgets
 url_label = ttk.Label(frame, text='Input video/playlist URL here:')
 url_entry = ttk.Entry(frame)
 sync_button = ttk.Button(frame, text='Select folder to sync with', command=sync_folder)
@@ -502,7 +547,7 @@ download_progress = ttk.Progressbar(frame, orient=HORIZONTAL, mode='determinate'
 video_label = ttk.Label(frame, text='', textvariable=video)
 artist_label = ttk.Label(frame, text='Select the artist:')
 title_label = ttk.Label(frame, text='Select the title:')
-artist_combobox = ttk.Combobox(frame)
+artist_combobox = ttk.Combobox(frame, textvariable=artist_combobox_content)
 swap_button = ttk.Button(frame, text='<=>', command=swap, state='disabled')
 title_combobox = ttk.Combobox(frame)
 capitalize_artist_button = ttk.Button(frame, text='Normal capitalization', command=capitalize_artist, state='disabled')
@@ -518,6 +563,10 @@ vgm_track_label = ttk.Label(frame, text='Select the track number')
 vgm_track_entry = ttk.Entry(frame)
 vgm_swap_checkbutton = ttk.Checkbutton(frame, text='Swap title/artist', command=swap_permanently, variable=swap_variable)
 
+# widget events
+artist_combobox_content.trace_add('write', artist_combobox_write)
+
+# grid
 width = 6 # number of columns
 
 frame.grid(row=0, column=0, sticky=(N, E, W))
