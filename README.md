@@ -1,6 +1,6 @@
 # YouTube-Downloader
 ## Description
-A GUI program that downloads YouTube videos, converts them to MP3 and lets you set metadata such as artist and title.
+A GUI program that downloads YouTube videos and playlists, converts them to MP3 and lets you set metadata such as artist and title.
 
 ## External Modules Used
 - [YouTube-DL](https://github.com/ytdl-org/youtube-dl) for downloading videos from YouTube
