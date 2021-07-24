@@ -35,16 +35,29 @@ class Logger(object):
         time = f"[{datetime.now().strftime('%H:%M:%S')}] "
         msg = msg.replace('\r', '')
         if '[download]  ' in msg or '[download] 100.0%' in msg:
-            # error_text.delete('end-1l+1c', 'end')
-            # error_text.insert('end', msg)
+            if debug.get() == '1':
+                error_text['state'] = 'normal'
+                error_text.delete('end-1l', 'end')
+                error_text.insert('end', '\n' + f'{time}{msg}')
+                error_text.see('end')
+                error_text['state'] = 'disabled'
             print(f"\r{time}{msg}", end='', flush=True)
         elif '[download] 100%' in msg:
-            # error_text.delete('end-1l', 'end')
-            # error_text.insert('end', '\n' + msg + '\n')
+            if debug.get() == '1':
+                error_text['state'] = 'normal'
+                error_text.delete('end-1l', 'end')
+                error_text.insert('end', '\n' + f'{time}{msg}' + '\n')
+                error_text.see('end')
+                error_text['state'] = 'disabled'
             print(f"\r{time}{msg}")
         else:
-            # error_text.insert('end', msg + '\n')
+            if debug.get() == '1':
+                error_text['state'] = 'normal'
+                error_text.insert('end', f'{time}{msg}' + '\n')
+                error_text.see('end')
+                error_text['state'] = 'disabled'
             print(f'{time}{msg}')
+        Tk.update(root)
 
     def warning(self, msg):
         print_error('warning', msg)
@@ -517,6 +530,8 @@ frame = ttk.Frame(root, padding='3 10 12 12')
 # menu variables
 metadata_mode = StringVar()
 metadata_mode.set('normal')
+debug = StringVar()
+debug.set('0')
 
 # widget variables
 progress = StringVar()
@@ -535,6 +550,10 @@ menubar.add_cascade(menu=menu_metadata_mode, label='Metadata Mode')
 menu_metadata_mode.add_radiobutton(label='Normal', variable=metadata_mode, command=update_metadata_mode, value='normal')
 menu_metadata_mode.add_radiobutton(label='VGM', variable=metadata_mode, command=update_metadata_mode, value='vgm')
 menu_metadata_mode.add_radiobutton(label='Classical', variable=metadata_mode, command=update_metadata_mode, value='classical')
+
+menu_debug = Menu(menubar)
+menubar.add_cascade(menu=menu_debug, label='Debug')
+menu_debug.add_checkbutton(label='Show debug messages', variable=debug, onvalue='1', offvalue='0')
 
 # widgets
 url_label = ttk.Label(frame, text='Input video/playlist URL here:')
