@@ -9,7 +9,8 @@ from tkinter import ttk
 from tkinter.scrolledtext import ScrolledText
 from datetime import datetime
 import json
-import shutil
+import shutil # moving files between drives when syncing
+import ctypes # prevent sleep mode when downloading
 from pprint import pprint
 
 class Globals:
@@ -336,10 +337,12 @@ def download():
         'progress_hooks': [hook],
         'match_filter': get_info_dict,
         'logger': Logger(),
-        #'download_archive': 'archive.txt',
         'default_search': 'ytsearch'
     }
     
+    # prevent windows sleep mode
+    ctypes.windll.kernel32.SetThreadExecutionState(0x80000001)
+
     ydl = youtube_dl.YoutubeDL(ydl_opts)
     info = ydl.extract_info(url_entry.get(), download=True) # ie_key='Youtube' could be faster
     
@@ -350,6 +353,7 @@ def download():
         url_entry.state(['!disabled'])
         url_entry.delete(0, 'end')
         progress.set('')
+        ctypes.windll.kernel32.SetThreadExecutionState(0x80000000)
         return
     
     video.set('')
@@ -361,8 +365,9 @@ def download():
         if '_type' in info:
             if info['_type'] == 'playlist':
                 for entry in info['entries']:
-                    if entry['id'] and not os.path.isfile(os.path.join('out', entry['id'] + '.mp3')) and not entry['id'] in Globals.already_finished:
-                        results.append(entry['id'])
+                    if entry['id']:
+                        if not os.path.isfile(os.path.join('out', entry['id'] + '.mp3')) and not entry['id'] in Globals.already_finished:
+                            results.append(entry['id'])
         elif info['id'] and not os.path.isfile(os.path.join('out', info['id'] + '.mp3')) and not info['id'] in Globals.already_finished:
             results.append(info['id'])
         
@@ -397,6 +402,9 @@ def download():
                     print_error('sync', f'Deleting {f}')
                 except OSError as e:
                     print_error('sync', e)
+    
+    # reactivate windows sleep mode
+    ctypes.windll.kernel32.SetThreadExecutionState(0x80000000)
 
     # don't start setting metadata if the files list is empty
     if not Globals.files:
