@@ -4,8 +4,7 @@ from mutagen.id3 import ID3, TIT2, TPE1, TPUB, TALB, TRCK, TCON
 import os
 import tkinter
 from tkinter import *
-from tkinter import filedialog
-from tkinter import ttk
+from tkinter import ttk, filedialog, messagebox
 from tkinter.scrolledtext import ScrolledText
 from datetime import datetime
 import json
@@ -393,13 +392,14 @@ def download():
     time = (datetime.now() - Globals.start).seconds
     progress.set(f"Downloaded {len(Globals.files)} video{'s' if len(Globals.files) != 1 else ''} in {time // 60}:{'0' if (time % 60) < 10 else ''}{time % 60}")
     
-    # delete all files from the destination folder that are not in the dont_download list (which means they were removed from the playlist)
+    # delete all files from the destination folder that are not in the dont_delete list (which means they were removed from the playlist)
     if Globals.already_finished and Globals.folder:
         for f in Globals.already_finished.values():
             if not f in Globals.dont_delete:
                 try:
-                    os.remove(os.path.join(Globals.folder, f))
-                    print_error('sync', f'Deleting {f}')
+                    if messagebox.askyesno(title='Delete file?', icon='question', message=f'The video connected to "{f}" is not in the playlist anymore. Do you want to delete the file?'):
+                        os.remove(os.path.join(Globals.folder, f))
+                        print_error('sync', f'Deleting {f}')
                 except OSError as e:
                     print_error('sync', e)
     
