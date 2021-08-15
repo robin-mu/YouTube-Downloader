@@ -79,6 +79,12 @@ def generate_metadata_choices(metadata):
     title_choices = []
     artist_choices = []
 
+    # add data from metadata.json as first choice
+    if metadata['id'] in Globals.metadata_file:
+        file_data = Globals.metadata_file[metadata['id']]
+        artist_choices.append(file_data[0])
+        title_choices.append(file_data[1])
+
     def remove_brackets(text):
         while '(' in text and ')' in text:
             text = text.split('(', 1)[0].strip() + ' ' + text.split(')', 1)[1].strip()
@@ -325,6 +331,16 @@ def download():
                 except IndexError as e:
                     print(f'{f} has no TPUB-Frame set')
 
+    # load metadata from file
+    try:
+        with open('metadata.json', 'r') as f:
+            Globals.metadata_file = json.load(f)
+    except Exception as e:
+        print_error('json', e)
+
+    # prevent windows sleep mode
+    ctypes.windll.kernel32.SetThreadExecutionState(0x80000001)
+
     ydl_opts = {
         'format': 'bestaudio/best',
         'outtmpl': 'out/%(id)s.%(ext)s',
@@ -338,9 +354,6 @@ def download():
         'logger': Logger(),
         'default_search': 'ytsearch'
     }
-    
-    # prevent windows sleep mode
-    ctypes.windll.kernel32.SetThreadExecutionState(0x80000001)
 
     ydl = youtube_dl.YoutubeDL(ydl_opts)
     info = ydl.extract_info(url_entry.get(), download=True) # ie_key='Youtube' could be faster
@@ -415,13 +428,6 @@ def download():
         progress.set('')
         return
     
-    # load metadata from file
-    try:
-        with open('metadata.json', 'r') as f:
-            Globals.metadata_file = json.load(f)
-    except Exception as e:
-        print_error('json', e)
-    
     update_combobox(True)
     
     # don't enable metdata selection if everything has been set already
@@ -483,7 +489,7 @@ def get_info_dict(info_dict):
         return f"{info_dict['id']}: File already present"
     
 def sync_folder():
-    Globals.folder = tkinter.filedialog.askdirectory()
+    Globals.folder = filedialog.askdirectory()
 
 def swap():
     temp = artist_combobox.get()
