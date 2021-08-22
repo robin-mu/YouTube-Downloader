@@ -21,6 +21,12 @@ class Globals:
     start = datetime.now()
     metadata_file = {}
 
+# remove characters that are not allowed in filenames (by windows)
+def safe_filename(filename):
+    for c in ['\\', '/', ':', '?', '"', '*', '<', '>', '|']:
+        filename = filename.replace(c, '')
+    return filename
+
 def print_error(process, msg):
     msg = f"[{datetime.now().strftime('%H:%M:%S')}] [{process}] {msg}"
     error_text['state'] = 'normal'
@@ -209,11 +215,7 @@ def update_combobox(from_start):
 
 def apply_metadata(id, artist, title):
     path = os.path.join('out', id + '.mp3')
-    filename = f'{artist} - {title}.mp3'
-    
-    # remove characters that are not allowed in filenames (by windows)
-    for c in ['\\', '/', ':', '?', '"', '*', '<', '>', '|']:
-        filename = filename.replace(c, '')
+    filename = safe_filename(f'{artist} - {title}.mp3')
         
     try:
         id3 = ID3(path)
@@ -318,9 +320,9 @@ def download():
     sync_button.state(['disabled'])
     url_entry.state(['disabled'])
     
-    # add IDs of already finished files to a list
+    # add IDs of already finished files to a list if sync is enabled
     Globals.already_finished = {}
-    folder = Globals.folder
+    folder = Globals.folder if download_mode.get() == 'sync' else ''
     if folder:
         for f in os.listdir(folder):
             if f.split('.')[-1] == 'mp3':
@@ -357,7 +359,23 @@ def download():
     }
 
     ydl = youtube_dl.YoutubeDL(ydl_opts)
-    info = ydl.extract_info(url_entry.get(), download=True) # ie_key='Youtube' could be faster
+    info = ydl.extract_info(url_entry.get(), download = not download_mode.get() == 'metadata') # ie_key='Youtube' could be faster
+
+    # save metadata and return if "download metadata" mode is selected
+    if download_mode.get() == 'metadata':
+        try:
+            filename = safe_filename(f'{info["uploader"]} - {info["title"]}')
+            with open(f'out/{filename}.json', 'w') as f:
+                json.dump(info, f)
+        except OSError as e:
+            print_error('OS', e)
+
+        download_button.state(['!disabled'])
+        url_entry.state(['!disabled'])
+        url_entry.delete(0, 'end')
+        progress.set('')
+        ctypes.windll.kernel32.SetThreadExecutionState(0x80000000)
+        return
     
     # reset if info is empty
     if not info:
@@ -537,6 +555,7 @@ def get_info_dict(info_dict):
     
 def sync_folder():
     Globals.folder = filedialog.askdirectory()
+    sync_folder_variable.set(f'Folder: {Globals.folder}' if Globals.folder else 'No folder selected')
 
 def swap():
     temp = artist_combobox.get()
@@ -567,14 +586,18 @@ def update_download_mode():
         download_button['text'] = 'Download'
         download_button['command'] = download
     elif mode == 'sync':
-        sync_button.grid(row=2, column=0, columnspan=width // 3, pady=(5, 0))
-        sync_ask_delete_checkbutton.grid(row=2, column=width // 3 * 2, columnspan=width // 3, pady=(5, 0))
+        sync_label.grid(row=10, column=0, columnspan=width)
+        sync_button.grid(row=20, column=0, columnspan=width // 3, pady=(5, 0))
+        sync_ask_delete_checkbutton.grid(row=20, column=width // 3 * 2, columnspan=width // 3, pady=(5, 0))
 
         download_button['text'] = 'Download and Sync'
         download_button['command'] = download
     elif mode == 'length':
         download_button['text'] = 'Calculate length'
         download_button['command'] = calc_length
+    elif mode == 'metadata':
+        download_button['text'] = 'Download Metadata'
+        download_button['command'] = download
 
 def update_metadata_mode():
     for w in metadata_widgets:
@@ -584,11 +607,11 @@ def update_metadata_mode():
     if mode == 'normal':
         swap_button.grid(row=2, column=width // 3, columnspan=width // 3, sticky=(E,W), padx=(5, 5))
     elif mode == 'vgm':
-        vgm_album_label.grid(row=4, column=0, columnspan=width // 3)
-        vgm_album_combobox.grid(row=5, column=0, columnspan=width // 3, sticky=(E,W))
-        vgm_track_label.grid(row=4, column=width // 3 * 2, columnspan=width // 3)
-        vgm_track_entry.grid(row=5, column=width // 3 * 2, columnspan=width // 3, sticky=(E,W))
         vgm_swap_checkbutton.grid(row=2, column=width // 3, columnspan=width // 3, padx=(5, 5))
+        vgm_album_label.grid(row=10, column=0, columnspan=width // 3)
+        vgm_album_combobox.grid(row=11, column=0, columnspan=width // 3, sticky=(E,W))
+        vgm_track_label.grid(row=10, column=width // 3 * 2, columnspan=width // 3)
+        vgm_track_entry.grid(row=11, column=width // 3 * 2, columnspan=width // 3, sticky=(E,W))
 
 def artist_combobox_write(*args):
     if metadata_mode.get() == 'vgm':
@@ -612,6 +635,8 @@ debug = StringVar()
 debug.set('0')
 
 # widget variables
+sync_folder_variable = StringVar()
+sync_folder_variable.set('No folder selected')
 sync_ask_delete = StringVar()
 sync_ask_delete.set('1')
 progress = StringVar()
@@ -631,6 +656,7 @@ menubar.add_cascade(menu=menu_download_mode, label='Download Mode')
 menu_download_mode.add_radiobutton(label='Download', variable=download_mode, value='download', command=update_download_mode)
 menu_download_mode.add_radiobutton(label='Sync with Folder', variable=download_mode, value='sync', command=update_download_mode)
 menu_download_mode.add_radiobutton(label='Calculate length of Playlist', variable=download_mode, value='length', command=update_download_mode)
+menu_download_mode.add_radiobutton(label='Download metadata', variable=download_mode, value='metadata', command=update_download_mode)
 
 menu_metadata_mode = Menu(menubar)
 menubar.add_cascade(menu=menu_metadata_mode, label='Metadata Mode')
@@ -646,6 +672,7 @@ menu_debug.add_checkbutton(label='Show debug messages', variable=debug, onvalue=
 # download widgets
 url_label = ttk.Label(download_frame, text='Input video/playlist URL here:')
 url_entry = ttk.Entry(download_frame)
+sync_label = ttk.Label(download_frame, textvariable=sync_folder_variable)
 sync_button = ttk.Button(download_frame, text='Select folder to sync with', command=sync_folder)
 download_button = ttk.Button(download_frame, text='Download', command=download)
 sync_ask_delete_checkbutton = ttk.Checkbutton(download_frame, text='Ask before deleting files', variable=sync_ask_delete)
@@ -654,7 +681,7 @@ download_progress = ttk.Progressbar(download_frame, orient=HORIZONTAL, mode='det
 video_label = ttk.Label(download_frame, text='', textvariable=video)
 
 # download mode dependent widgets
-download_widgets = [sync_button, sync_ask_delete_checkbutton]
+download_widgets = [sync_label, sync_button, sync_ask_delete_checkbutton]
 
 # metadata widgets
 select_metadata_label = ttk.Label(metadata_frame, text='', textvariable=select_metadata_variable)
@@ -682,16 +709,16 @@ metadata_widgets = [swap_button, vgm_album_label, vgm_album_combobox, vgm_track_
 # widget events
 artist_combobox_content.trace_add('write', artist_combobox_write)
 
-# grid
+# grid (rows: 0-9 before mode dependent widgets, 10-19 mode dependent widgets, 20-29, after mode dependent widgets)
 width = 6 # number of columns
 
 download_frame.grid(row=0, column=0, sticky=(N, E, W), padx=5, pady=5)
 url_label.grid(row=0, column=0, columnspan=width)
 url_entry.grid(row=1, column=0, columnspan=width, sticky=(E, W))
-download_button.grid(row=2, column=width // 3, columnspan=width // 3, pady=(5, 0))
-download_progress.grid(row=3, column=0, columnspan=width, sticky=(E, W))
-progress_label.grid(row=4, column=0, columnspan=width)
-video_label.grid(row=5, column=0, columnspan=width)
+download_button.grid(row=20, column=width // 3, columnspan=width // 3, pady=(5, 0))
+download_progress.grid(row=21, column=0, columnspan=width, sticky=(E, W))
+progress_label.grid(row=22, column=0, columnspan=width)
+video_label.grid(row=23, column=0, columnspan=width)
 
 metadata_frame.grid(row=1, column=0, sticky=(N, E, W), padx=5, pady=5)
 select_metadata_label.grid(row=0, column=0, columnspan=width)
@@ -702,10 +729,10 @@ swap_button.grid(row=2, column=width // 3, columnspan=width // 3, sticky=(E, W),
 title_combobox.grid(row=2, column=width // 3 * 2, columnspan=width // 3, sticky=(E, W))
 capitalize_artist_button.grid(row=3, column=0, columnspan=width // 3, padx=(0, 5), pady=(5, 0))
 capitalize_title_button.grid(row=3, column=width // 3 * 2, columnspan=width // 3, padx=(5, 0), pady=(5, 0))
-metadata_auto_button.grid(row=6, column=0, columnspan=width // 3, pady=(5, 0))
-metadata_button.grid(row=6, column=width // 3, columnspan=width // 3, pady=(5, 0))
-metadata_file_checkbutton.grid(row=6, column=width // 3 * 2, columnspan=width // 3, pady=(5, 0))
-error_text.grid(row=7, column=0, columnspan=width, sticky=(E, W), pady=(5, 0))
+metadata_auto_button.grid(row=20, column=0, columnspan=width // 3, pady=(5, 0))
+metadata_button.grid(row=20, column=width // 3, columnspan=width // 3, pady=(5, 0))
+metadata_file_checkbutton.grid(row=20, column=width // 3 * 2, columnspan=width // 3, pady=(5, 0))
+error_text.grid(row=21, column=0, columnspan=width, sticky=(E, W), pady=(5, 0))
 
 url_entry.focus()
 
