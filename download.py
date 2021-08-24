@@ -209,11 +209,13 @@ def update_combobox(from_start):
             vgm_album_combobox['values'] = [i + ' OST' for i in artist_combobox['values']]
 
             if previous_artist:
-                artist_combobox.set(previous_artist)
+                if vgm_keep_artist_variable.get() == '1':
+                    artist_combobox.set(previous_artist)
                 artist_combobox['values'] += (previous_artist,)
 
             if previous_album:
-                vgm_album_combobox.set(previous_album)
+                if vgm_keep_artist_variable.get() == '1':
+                    vgm_album_combobox.set(previous_album)
                 vgm_album_combobox['values'] += (previous_album,)
 
             vgm_track_entry.delete(0, 'end')
@@ -619,6 +621,7 @@ def update_metadata_mode():
         vgm_album_combobox.grid(row=11, column=0, columnspan=width // 3, sticky=(E,W))
         vgm_track_label.grid(row=10, column=width // 3 * 2, columnspan=width // 3)
         vgm_track_entry.grid(row=11, column=width // 3 * 2, columnspan=width // 3, sticky=(E,W))
+        vgm_keep_artist_checkbutton.grid(row=12, column=0, columnspan=width // 3)
 
 def artist_combobox_write(*args):
     if metadata_mode.get() == 'vgm':
@@ -655,6 +658,8 @@ swap_variable = StringVar()
 artist_combobox_content = StringVar()
 
 album_label_variable = StringVar()
+
+vgm_keep_artist_variable = StringVar()
 
 # menu
 menubar = Menu(root)
@@ -713,9 +718,10 @@ vgm_album_label = ttk.Label(metadata_frame, text='Select the Album')
 vgm_album_combobox = ttk.Combobox(metadata_frame)
 vgm_track_label = ttk.Label(metadata_frame, text='Select the track number')
 vgm_track_entry = ttk.Entry(metadata_frame)
+vgm_keep_artist_checkbutton = ttk.Checkbutton(metadata_frame, text='Keep artist/album of previous video', variable=vgm_keep_artist_variable)
 
 # metadata mode dependent widgets
-metadata_widgets = [album_label, vgm_album_label, vgm_album_combobox, vgm_track_label, vgm_track_entry]
+metadata_widgets = [album_label, vgm_album_label, vgm_album_combobox, vgm_track_label, vgm_track_entry, vgm_keep_artist_checkbutton]
 
 # widget events
 artist_combobox_content.trace_add('write', artist_combobox_write)
