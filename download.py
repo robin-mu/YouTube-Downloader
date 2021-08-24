@@ -184,41 +184,55 @@ def update_combobox(from_start):
             video_text += f" ({file['playlist_index']}/{file['playlist_length']})"
         select_metadata_variable.set(video_text)
         
-        if metadata_mode.get() == 'vgm':
+        if metadata_mode.get() == 'vgm' or metadata_mode.get() == 'album':
             previous_artist = artist_combobox.get()
-            previous_album = vgm_album_combobox.get()
+            previous_album = album_combobox.get()
 
-        artist_combobox['values'] = Globals.current_file['artist']
-        title_combobox['values'] = Globals.current_file['title']
-        artist_combobox.set(Globals.current_file['artist'][0])
-        title_combobox.set(Globals.current_file['title'][0])
+        if swap_variable.get() == '0':
+            artist_combobox['values'] = Globals.current_file['artist']
+            title_combobox['values'] = Globals.current_file['title']
+            artist_combobox.set(Globals.current_file['artist'][0])
+            title_combobox.set(Globals.current_file['title'][0])
+        else:
+            artist_combobox['values'] = Globals.current_file['title']
+            title_combobox['values'] = Globals.current_file['artist']
+            artist_combobox.set(Globals.current_file['title'][0])
+            title_combobox.set(Globals.current_file['artist'][0])
 
         # Album mode
         if metadata_mode.get() == 'album':
-            album_label_variable.set(f'Album: {Globals.current_file["album"]}, Track: {Globals.current_file["track"]}')
-
-        # VGM mode
-        if metadata_mode.get() == 'vgm':
-            if swap_variable.get() == '1':
-                artist_combobox['values'] = Globals.current_file['title']
-                title_combobox['values'] = Globals.current_file['artist']
-                artist_combobox.set(Globals.current_file['title'][0])
-                title_combobox.set(Globals.current_file['artist'][0])
-                
-            vgm_album_combobox.set(artist_combobox.get()  + ' OST')
-            vgm_album_combobox['values'] = [i + ' OST' for i in artist_combobox['values']]
+            album_combobox.set(Globals.current_file['album'])
+            album_combobox['values'] = (Globals.current_file['album'],)
+            track_entry.delete(0, 'end')
+            track_entry.insert('end', Globals.current_file['track'])
 
             if previous_artist:
-                if vgm_keep_artist_variable.get() == '1':
+                if keep_artist_variable.get() == '1':
                     artist_combobox.set(previous_artist)
                 artist_combobox['values'] += (previous_artist,)
 
             if previous_album:
-                if vgm_keep_artist_variable.get() == '1':
-                    vgm_album_combobox.set(previous_album)
-                vgm_album_combobox['values'] += (previous_album,)
+                if keep_artist_variable.get() == '1':
+                    album_combobox.set(previous_album)
+                album_combobox['values'] = (album_combobox['values'], previous_album)
 
-            vgm_track_entry.delete(0, 'end')
+        # VGM mode
+        if metadata_mode.get() == 'vgm':
+                
+            album_combobox.set(artist_combobox.get()  + ' OST')
+            album_combobox['values'] = [i + ' OST' for i in artist_combobox['values']]
+
+            if previous_artist:
+                if keep_artist_variable.get() == '1':
+                    artist_combobox.set(previous_artist)
+                artist_combobox['values'] += (previous_artist,)
+
+            if previous_album:
+                if keep_artist_variable.get() == '1':
+                    album_combobox.set(previous_album)
+                album_combobox['values'] += (previous_album,)
+
+            track_entry.delete(0, 'end')
 
     else:
         reset()
@@ -233,16 +247,13 @@ def apply_metadata(id, artist, title):
         id3.add(TIT2(text=title))
         id3.add(TPUB(text=id))
 
-        # Album Metadata
-        if metadata_mode.get() == 'album':
-            id3.add(TALB(text=Globals.current_file['album']))
-            id3.add(TRCK(text=str(Globals.current_file['track'])))
+        # Album and VGM Metadata
+        if metadata_mode.get() == 'vgm' or metadata_mode.get() == 'album':
+            id3.add(TALB(text=album_combobox.get()))
+            id3.add(TRCK(text=track_entry.get()))
 
-        # VGM Metadata
-        if metadata_mode.get() == 'vgm':
-            id3.add(TALB(text=vgm_album_combobox.get()))
-            id3.add(TRCK(text=vgm_track_entry.get()))
-            id3.add(TCON(text='VGM'))
+            if metadata_mode.get() == 'vgm':
+                id3.add(TCON(text='VGM'))
 
         id3.save()
         
@@ -297,10 +308,11 @@ def reset():
     metadata_button.state(['disabled'])
 
     # VGM mode
-    if metadata_mode.get() == 'vgm':
-        vgm_album_combobox.set('')
-        vgm_album_combobox['values'] = []
-        vgm_track_entry.delete(0, 'end')
+    if metadata_mode.get() == 'vgm' or metadata_mode.get() == 'album':
+        album_combobox.set('')
+        album_combobox['values'] = []
+        track_entry.delete(0, 'end')
+        keep_artist_variable.set('0')
 
 def apply_metadata_once():
     apply_metadata(Globals.current_file['id'], artist_combobox.get(), title_combobox.get())
@@ -614,19 +626,17 @@ def update_metadata_mode():
 
     mode = metadata_mode.get()
 
-    if mode == 'album':
-        album_label.grid(row=10, column=0, columnspan=width)
-    elif mode == 'vgm':
-        vgm_album_label.grid(row=10, column=0, columnspan=width // 3)
-        vgm_album_combobox.grid(row=11, column=0, columnspan=width // 3, sticky=(E,W))
-        vgm_track_label.grid(row=10, column=width // 3 * 2, columnspan=width // 3)
-        vgm_track_entry.grid(row=11, column=width // 3 * 2, columnspan=width // 3, sticky=(E,W))
-        vgm_keep_artist_checkbutton.grid(row=12, column=0, columnspan=width // 3)
+    if mode == 'album' or mode == 'vgm':
+        album_label.grid(row=10, column=0, columnspan=width // 3)
+        album_combobox.grid(row=11, column=0, columnspan=width // 3, sticky=(E,W))
+        track_label.grid(row=10, column=width // 3 * 2, columnspan=width // 3)
+        track_entry.grid(row=11, column=width // 3 * 2, columnspan=width // 3, sticky=(E,W))
+        keep_artist_checkbutton.grid(row=12, column=0, columnspan=width // 3)
 
 def artist_combobox_write(*args):
     if metadata_mode.get() == 'vgm':
         artist = artist_combobox.get()
-        vgm_album_combobox.set(artist if artist.endswith(' OST') else artist + ' OST')
+        album_combobox.set(artist if artist.endswith(' OST') else artist + ' OST')
 
 root = Tk()
 root.title('YouTube to MP3 Converter')
@@ -655,11 +665,10 @@ video = StringVar()
 select_metadata_variable = StringVar()
 metadata_file_variable = StringVar()
 swap_variable = StringVar()
+swap_variable.set('0')
 artist_combobox_content = StringVar()
 
-album_label_variable = StringVar()
-
-vgm_keep_artist_variable = StringVar()
+keep_artist_variable = StringVar()
 
 # menu
 menubar = Menu(root)
@@ -712,16 +721,14 @@ metadata_button = ttk.Button(metadata_frame, text='Apply metadata', command=appl
 metadata_file_checkbutton = ttk.Checkbutton(metadata_frame, text='Apply metadata from metadata.json automatically', variable=metadata_file_variable, command=apply_metadata_file)
 error_text = ScrolledText(metadata_frame, wrap=tkinter.WORD, height=10, state='disabled')
 
-album_label = ttk.Label(metadata_frame, textvariable=album_label_variable)
-
-vgm_album_label = ttk.Label(metadata_frame, text='Select the Album')
-vgm_album_combobox = ttk.Combobox(metadata_frame)
-vgm_track_label = ttk.Label(metadata_frame, text='Select the track number')
-vgm_track_entry = ttk.Entry(metadata_frame)
-vgm_keep_artist_checkbutton = ttk.Checkbutton(metadata_frame, text='Keep artist/album of previous video', variable=vgm_keep_artist_variable)
+album_label = ttk.Label(metadata_frame, text='Select the Album')
+album_combobox = ttk.Combobox(metadata_frame)
+track_label = ttk.Label(metadata_frame, text='Select the track number')
+track_entry = ttk.Entry(metadata_frame)
+keep_artist_checkbutton = ttk.Checkbutton(metadata_frame, text='Keep artist/album of previous video', variable=keep_artist_variable)
 
 # metadata mode dependent widgets
-metadata_widgets = [album_label, vgm_album_label, vgm_album_combobox, vgm_track_label, vgm_track_entry, vgm_keep_artist_checkbutton]
+metadata_widgets = [album_label, album_combobox, track_label, track_entry, keep_artist_checkbutton]
 
 # widget events
 artist_combobox_content.trace_add('write', artist_combobox_write)
