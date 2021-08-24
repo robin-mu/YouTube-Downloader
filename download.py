@@ -117,7 +117,7 @@ def generate_metadata_choices(metadata):
 
     title = metadata['title']
 
-    for sep in [' - ', ' – ', '-', '|', ':', '~', '‐', '_']:
+    for sep in [' - ', ' – ', ' — ', '-', '|', ':', '~', '‐', '_']:
         if sep in title:
             split = title.split(sep)
             for i in range(len(split)):
@@ -143,6 +143,10 @@ def generate_metadata_choices(metadata):
     channel = metadata['channel']
     artist_choices.append(remove_brackets(channel))
     artist_choices.append(channel)
+
+    # Album mode
+    choices['album'] = metadata['album'] if 'album' in metadata else ''
+    choices['track'] = metadata['playlist_index'] if 'playlist_index' in metadata else ''
 
     # VGM mode
     if metadata_mode.get() == 'vgm':
@@ -189,6 +193,10 @@ def update_combobox(from_start):
         artist_combobox.set(Globals.current_file['artist'][0])
         title_combobox.set(Globals.current_file['title'][0])
 
+        # Album mode
+        if metadata_mode.get() == 'album':
+            album_label_variable.set(f'Album: {Globals.current_file["album"]}, Track: {Globals.current_file["track"]}')
+
         # VGM mode
         if metadata_mode.get() == 'vgm':
             if swap_variable.get() == '1':
@@ -222,6 +230,11 @@ def apply_metadata(id, artist, title):
         id3.add(TPE1(text=artist))
         id3.add(TIT2(text=title))
         id3.add(TPUB(text=id))
+
+        # Album Metadata
+        if metadata_mode.get() == 'album':
+            id3.add(TALB(text=Globals.current_file['album']))
+            id3.add(TRCK(text=str(Globals.current_file['track'])))
 
         # VGM Metadata
         if metadata_mode.get() == 'vgm':
@@ -275,7 +288,7 @@ def reset():
     progress.set('')
     video.set('')
     select_metadata_variable.set('')
-    swap_button.state(['disabled'])
+    swap_checkbutton.state(['disabled'])
     capitalize_artist_button.state(['disabled'])
     capitalize_title_button.state(['disabled'])
     metadata_auto_button.state(['disabled'])
@@ -364,8 +377,7 @@ def download():
     # save metadata and return if "download metadata" mode is selected
     if download_mode.get() == 'metadata':
         try:
-            filename = safe_filename(f'{info["uploader"]} - {info["title"]}')
-            with open(f'out/{filename}.json', 'w') as f:
+            with open(f'out/{safe_filename(info["title"])}.json', 'w') as f:
                 json.dump(info, f)
         except OSError as e:
             print_error('OS', e)
@@ -454,7 +466,7 @@ def download():
     
     # don't enable metdata selection if everything has been set already
     if Globals.current_file:
-        swap_button.state(['!disabled'])
+        swap_checkbutton.state(['!disabled'])
         capitalize_artist_button.state(['!disabled'])
         capitalize_title_button.state(['!disabled'])
         metadata_auto_button.state(['!disabled'])
@@ -556,19 +568,8 @@ def get_info_dict(info_dict):
 def sync_folder():
     Globals.folder = filedialog.askdirectory()
     sync_folder_variable.set(f'Folder: {Globals.folder}' if Globals.folder else 'No folder selected')
-
-def swap():
-    temp = artist_combobox.get()
-    artist_combobox.set(title_combobox.get())
-    title_combobox.set(temp)
     
-def capitalize_artist():
-    artist_combobox.set(artist_combobox.get().title())
-
-def capitalize_title():
-    title_combobox.set(title_combobox.get().title())
-
-def swap_permanently():
+def swap():
     temp = artist_combobox.get()
     artist_combobox.set(title_combobox.get())
     title_combobox.set(temp)
@@ -576,6 +577,12 @@ def swap_permanently():
     temp = artist_combobox['values']
     artist_combobox['values'] = title_combobox['values']
     title_combobox['values'] = temp
+
+def capitalize_artist():
+    artist_combobox.set(artist_combobox.get().title())
+
+def capitalize_title():
+    title_combobox.set(title_combobox.get().title())
 
 def update_download_mode():
     for w in download_widgets:
@@ -604,10 +611,10 @@ def update_metadata_mode():
         w.grid_forget()
 
     mode = metadata_mode.get()
-    if mode == 'normal':
-        swap_button.grid(row=2, column=width // 3, columnspan=width // 3, sticky=(E,W), padx=(5, 5))
+
+    if mode == 'album':
+        album_label.grid(row=10, column=0, columnspan=width)
     elif mode == 'vgm':
-        vgm_swap_checkbutton.grid(row=2, column=width // 3, columnspan=width // 3, padx=(5, 5))
         vgm_album_label.grid(row=10, column=0, columnspan=width // 3)
         vgm_album_combobox.grid(row=11, column=0, columnspan=width // 3, sticky=(E,W))
         vgm_track_label.grid(row=10, column=width // 3 * 2, columnspan=width // 3)
@@ -647,6 +654,8 @@ metadata_file_variable = StringVar()
 swap_variable = StringVar()
 artist_combobox_content = StringVar()
 
+album_label_variable = StringVar()
+
 # menu
 menubar = Menu(root)
 root['menu'] = menubar
@@ -661,6 +670,7 @@ menu_download_mode.add_radiobutton(label='Download metadata', variable=download_
 menu_metadata_mode = Menu(menubar)
 menubar.add_cascade(menu=menu_metadata_mode, label='Metadata Mode')
 menu_metadata_mode.add_radiobutton(label='Normal', variable=metadata_mode, value='normal', command=update_metadata_mode)
+menu_metadata_mode.add_radiobutton(label='Album', variable=metadata_mode, value='album', command=update_metadata_mode)
 menu_metadata_mode.add_radiobutton(label='VGM', variable=metadata_mode, value='vgm', command=update_metadata_mode)
 menu_metadata_mode.add_radiobutton(label='Classical', variable=metadata_mode, value='classical', command=update_metadata_mode)
 
@@ -688,7 +698,7 @@ select_metadata_label = ttk.Label(metadata_frame, text='', textvariable=select_m
 artist_label = ttk.Label(metadata_frame, text='Select the artist:')
 title_label = ttk.Label(metadata_frame, text='Select the title:')
 artist_combobox = ttk.Combobox(metadata_frame, textvariable=artist_combobox_content)
-swap_button = ttk.Button(metadata_frame, text='<=>', command=swap, state='disabled')
+swap_checkbutton = ttk.Checkbutton(metadata_frame, text='Swap title/artist', command=swap, variable=swap_variable)
 title_combobox = ttk.Combobox(metadata_frame)
 capitalize_artist_button = ttk.Button(metadata_frame, text='Normal capitalization', command=capitalize_artist, state='disabled')
 capitalize_title_button = ttk.Button(metadata_frame, text='Normal capitalization', command=capitalize_title, state='disabled')
@@ -697,14 +707,15 @@ metadata_button = ttk.Button(metadata_frame, text='Apply metadata', command=appl
 metadata_file_checkbutton = ttk.Checkbutton(metadata_frame, text='Apply metadata from metadata.json automatically', variable=metadata_file_variable, command=apply_metadata_file)
 error_text = ScrolledText(metadata_frame, wrap=tkinter.WORD, height=10, state='disabled')
 
+album_label = ttk.Label(metadata_frame, textvariable=album_label_variable)
+
 vgm_album_label = ttk.Label(metadata_frame, text='Select the Album')
 vgm_album_combobox = ttk.Combobox(metadata_frame)
 vgm_track_label = ttk.Label(metadata_frame, text='Select the track number')
 vgm_track_entry = ttk.Entry(metadata_frame)
-vgm_swap_checkbutton = ttk.Checkbutton(metadata_frame, text='Swap title/artist', command=swap_permanently, variable=swap_variable)
 
 # metadata mode dependent widgets
-metadata_widgets = [swap_button, vgm_album_label, vgm_album_combobox, vgm_track_label, vgm_track_entry, vgm_swap_checkbutton]
+metadata_widgets = [album_label, vgm_album_label, vgm_album_combobox, vgm_track_label, vgm_track_entry]
 
 # widget events
 artist_combobox_content.trace_add('write', artist_combobox_write)
@@ -725,7 +736,7 @@ select_metadata_label.grid(row=0, column=0, columnspan=width)
 artist_label.grid(row=1, column=0, columnspan=width // 3)
 title_label.grid(row=1, column=width // 3 * 2, columnspan=width // 3)
 artist_combobox.grid(row=2, column=0, columnspan=width // 3, sticky=(E, W))
-swap_button.grid(row=2, column=width // 3, columnspan=width // 3, sticky=(E, W), padx=(5, 5))
+swap_checkbutton.grid(row=2, column=width // 3, columnspan=width // 3, sticky=(E, W), padx=(5, 5))
 title_combobox.grid(row=2, column=width // 3 * 2, columnspan=width // 3, sticky=(E, W))
 capitalize_artist_button.grid(row=3, column=0, columnspan=width // 3, padx=(0, 5), pady=(5, 0))
 capitalize_title_button.grid(row=3, column=width // 3 * 2, columnspan=width // 3, padx=(5, 0), pady=(5, 0))
