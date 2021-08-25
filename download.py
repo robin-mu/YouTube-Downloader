@@ -77,19 +77,18 @@ def generate_metadata_choices(metadata):
     choices['id'] = metadata['id']
     choices['originaltitle'] = metadata['title']
     
-    if metadata['playlist']:
-        choices['playlist'] = metadata['playlist']
-        choices['playlist_index'] = metadata['playlist_index']
-        choices['playlist_length'] = metadata['n_entries']
-    
     title_choices = []
     artist_choices = []
+    album_choices = []
+    track_choices = []
 
     # add data from metadata.json as first choice
     if metadata['id'] in Globals.metadata_file:
         file_data = Globals.metadata_file[metadata['id']]
-        artist_choices.append(file_data[0])
-        title_choices.append(file_data[1])
+        artist_choices.append(file_data['artist'])
+        title_choices.append(file_data['title'])
+        album_choices.append(file_data['album'])
+        track_choices.append(file_data['track'])
 
     def remove_brackets(text):
         while '(' in text and ')' in text:
@@ -145,8 +144,8 @@ def generate_metadata_choices(metadata):
     artist_choices.append(channel)
 
     # Album mode
-    choices['album'] = metadata['album'] if 'album' in metadata else ''
-    choices['track'] = metadata['playlist_index'] if 'playlist_index' in metadata else ''
+    if 'album' in metadata:
+        album_choices.append(metadata['album'])
 
     # VGM mode
     if metadata_mode.get() == 'vgm':
@@ -154,10 +153,21 @@ def generate_metadata_choices(metadata):
             artist_choices = [i.replace(s, '').strip() for i in artist_choices]
             title_choices = [i.replace(s, '').strip() for i in title_choices]
     
+    if 'playlist' in metadata:
+        choices['playlist'] = metadata['playlist']
+        album_choices.append(metadata['playlist'])
+    if 'playlist_index' in metadata:
+        choices['playlist_index'] = metadata['playlist_index']
+        track_choices.append(metadata['playlist_index'])
+    if 'n_entries' in metadata:
+        choices['playlist_length'] = metadata['n_entries']
+
     # remove empty and duplicate list entries
     choices['title'] = list(dict.fromkeys(filter(None, title_choices)))
     choices['artist'] = list(dict.fromkeys(filter(None, artist_choices)))
-    
+    choices['album'] = list(dict.fromkeys(album_choices))
+    choices['track'] = list(dict.fromkeys(track_choices))
+
     return choices
     
 def update_combobox(from_start):
@@ -171,7 +181,7 @@ def update_combobox(from_start):
     while index < len(Globals.files) and Globals.files[index]['id'] in Globals.metadata_file and metadata_file_variable.get() == '1':
         id = Globals.files[index]['id']
         data = Globals.metadata_file[id]
-        apply_metadata(id, data[0], data[1])
+        apply_metadata(id, data)
         index += 1
     
     # reset if end of playlist is reached
@@ -180,7 +190,7 @@ def update_combobox(from_start):
         file = Globals.current_file
         
         video_text = f"Select Metadata for: \"{Globals.current_file['originaltitle']}\""
-        if 'playlist' in file:
+        if 'playlist_index' in file and 'playlist_length' in file:
             video_text += f" ({file['playlist_index']}/{file['playlist_length']})"
         select_metadata_variable.set(video_text)
         
@@ -201,10 +211,10 @@ def update_combobox(from_start):
 
         # Album mode
         if metadata_mode.get() == 'album':
-            album_combobox.set(Globals.current_file['album'])
-            album_combobox['values'] = (Globals.current_file['album'],)
-            track_entry.delete(0, 'end')
-            track_entry.insert('end', Globals.current_file['track'])
+            album_combobox.set(Globals.current_file['album'][0])
+            album_combobox['values'] = Globals.current_file['album']
+            track_combobox.set(Globals.current_file['track'][0])
+            track_combobox['values'] = Globals.current_file['track']
 
             if previous_artist:
                 if keep_artist_variable.get() == '1':
@@ -214,7 +224,7 @@ def update_combobox(from_start):
             if previous_album:
                 if keep_artist_variable.get() == '1':
                     album_combobox.set(previous_album)
-                album_combobox['values'] = (album_combobox['values'], previous_album)
+                album_combobox['values'] += (previous_album,)
 
         # VGM mode
         if metadata_mode.get() == 'vgm':
@@ -232,25 +242,26 @@ def update_combobox(from_start):
                     album_combobox.set(previous_album)
                 album_combobox['values'] += (previous_album,)
 
-            track_entry.delete(0, 'end')
+            track_combobox.set('')
+            track_combobox['values'] = []
 
     else:
         reset()
 
-def apply_metadata(id, artist, title):
+def apply_metadata(id, data):
     path = os.path.join('out', id + '.mp3')
-    filename = safe_filename(f'{artist} - {title}.mp3')
+    filename = safe_filename(f'{data["artist"]} - {data["title"]}.mp3')
         
     try:
         id3 = ID3(path)
-        id3.add(TPE1(text=artist))
-        id3.add(TIT2(text=title))
+        id3.add(TPE1(text=data['artist']))
+        id3.add(TIT2(text=data['title']))
         id3.add(TPUB(text=id))
 
         # Album and VGM Metadata
-        if metadata_mode.get() == 'vgm' or metadata_mode.get() == 'album':
-            id3.add(TALB(text=album_combobox.get()))
-            id3.add(TRCK(text=track_entry.get()))
+        if metadata_mode.get() == 'album' or metadata_mode.get() == 'vgm':
+            id3.add(TALB(text=data['album']))
+            id3.add(TRCK(text=str(data['track'])))
 
             if metadata_mode.get() == 'vgm':
                 id3.add(TCON(text='VGM'))
@@ -263,7 +274,7 @@ def apply_metadata(id, artist, title):
     except OSError as e:
         print_error('OS', e)
     
-    Globals.metadata_file[id] = [artist, title]
+    Globals.metadata_file[id] = {key: data[key] for key in ['artist', 'title', 'album', 'track']}
 
 def reset():
     # save metadata to file
@@ -311,23 +322,36 @@ def reset():
     if metadata_mode.get() == 'vgm' or metadata_mode.get() == 'album':
         album_combobox.set('')
         album_combobox['values'] = []
-        track_entry.delete(0, 'end')
+        track_combobox.set('')
+        track_combobox['values'] = []
         keep_artist_variable.set('0')
 
 def apply_metadata_once():
-    apply_metadata(Globals.current_file['id'], artist_combobox.get(), title_combobox.get())
+    file = Globals.current_file
+    file['artist'] = artist_combobox.get()
+    file['title'] = title_combobox.get()
+    file['album'] = album_combobox.get()
+    file['track'] = track_combobox.get()
+    apply_metadata(file['id'], file)
     update_combobox(False)
 
 def apply_metadata_auto():
     for f in Globals.files:
-        apply_metadata(f['id'], f['artist'][0], f['title'][0])
+        f['artist'] = f['artist'][0]
+        f['title'] = f['title'][0]
+        if metadata_mode.get() == 'vgm':
+            f['album'] = f['artist'] + ' OST'
+        else:
+            f['album'] = f['album'][0] if f['album'] else ''
+        f['track'] = f['track'][0] if f['track'] else ''
+        apply_metadata(f['id'], f)
     reset()
 
 def apply_metadata_file():
     if metadata_file_variable.get() == '1' and Globals.current_file and Globals.current_file['id'] in Globals.metadata_file:
         id = Globals.current_file['id']
         data = Globals.metadata_file[id]
-        apply_metadata(id, data[0], data[1])
+        apply_metadata(id, data)
         update_combobox(False)
 
 def download():
@@ -630,8 +654,19 @@ def update_metadata_mode():
         album_label.grid(row=10, column=0, columnspan=width // 3)
         album_combobox.grid(row=11, column=0, columnspan=width // 3, sticky=(E,W))
         track_label.grid(row=10, column=width // 3 * 2, columnspan=width // 3)
-        track_entry.grid(row=11, column=width // 3 * 2, columnspan=width // 3, sticky=(E,W))
+        track_combobox.grid(row=11, column=width // 3 * 2, columnspan=width // 3, sticky=(E,W))
         keep_artist_checkbutton.grid(row=12, column=0, columnspan=width // 3)
+
+        if Globals.current_file:
+            file = Globals.current_file
+            if mode == 'album':
+                album_combobox.set(file['album'][0])
+                album_combobox['values'] = file['album']
+                track_combobox.set(file['track'][0])
+                track_combobox['values'] = file['track']
+            elif mode == 'vgm':
+                album_combobox.set(artist_combobox.get()  + ' OST')
+                album_combobox['values'] = [i + ' OST' for i in artist_combobox['values']]
 
 def artist_combobox_write(*args):
     if metadata_mode.get() == 'vgm':
@@ -640,11 +675,12 @@ def artist_combobox_write(*args):
 
 root = Tk()
 root.title('YouTube to MP3 Converter')
-root.geometry('900x500')
+root.geometry('900x600')
 root.option_add('*tearOff', FALSE)
 
-download_frame = ttk.Frame(root, padding=(3, 10, 12, 12), borderwidth=5, relief='ridge')
-metadata_frame = ttk.Frame(root, padding=(3, 10, 12, 12), borderwidth=5, relief='ridge')
+download_frame = ttk.Labelframe(root, padding=(3, 10, 12, 12), borderwidth=5, relief='ridge', text='Download')
+metadata_frame = ttk.Labelframe(root, padding=(3, 10, 12, 12), borderwidth=5, relief='ridge', text='Metadata')
+error_frame = ttk.Labelframe(root, padding=(3, 10, 12, 12), borderwidth=5, relief='ridge', text='Errors')
 
 # menu variables
 download_mode = StringVar()
@@ -686,7 +722,6 @@ menubar.add_cascade(menu=menu_metadata_mode, label='Metadata Mode')
 menu_metadata_mode.add_radiobutton(label='Normal', variable=metadata_mode, value='normal', command=update_metadata_mode)
 menu_metadata_mode.add_radiobutton(label='Album', variable=metadata_mode, value='album', command=update_metadata_mode)
 menu_metadata_mode.add_radiobutton(label='VGM', variable=metadata_mode, value='vgm', command=update_metadata_mode)
-menu_metadata_mode.add_radiobutton(label='Classical', variable=metadata_mode, value='classical', command=update_metadata_mode)
 
 menu_debug = Menu(menubar)
 menubar.add_cascade(menu=menu_debug, label='Debug')
@@ -694,7 +729,7 @@ menu_debug.add_checkbutton(label='Show debug messages', variable=debug, onvalue=
 
 # widgets 
 # download widgets
-url_label = ttk.Label(download_frame, text='Input video/playlist URL here:')
+url_label = ttk.Label(download_frame, text='Input video/playlist URL or search query here:')
 url_entry = ttk.Entry(download_frame)
 sync_label = ttk.Label(download_frame, textvariable=sync_folder_variable)
 sync_button = ttk.Button(download_frame, text='Select folder to sync with', command=sync_folder)
@@ -719,21 +754,23 @@ capitalize_title_button = ttk.Button(metadata_frame, text='Normal capitalization
 metadata_auto_button = ttk.Button(metadata_frame, text='Apply metadata automatically', command=apply_metadata_auto, state='disabled')
 metadata_button = ttk.Button(metadata_frame, text='Apply metadata', command=apply_metadata_once, state='disabled')
 metadata_file_checkbutton = ttk.Checkbutton(metadata_frame, text='Apply metadata from metadata.json automatically', variable=metadata_file_variable, command=apply_metadata_file)
-error_text = ScrolledText(metadata_frame, wrap=tkinter.WORD, height=10, state='disabled')
 
 album_label = ttk.Label(metadata_frame, text='Select the Album')
 album_combobox = ttk.Combobox(metadata_frame)
 track_label = ttk.Label(metadata_frame, text='Select the track number')
-track_entry = ttk.Entry(metadata_frame)
+track_combobox = ttk.Combobox(metadata_frame)
 keep_artist_checkbutton = ttk.Checkbutton(metadata_frame, text='Keep artist/album of previous video', variable=keep_artist_variable)
 
 # metadata mode dependent widgets
-metadata_widgets = [album_label, album_combobox, track_label, track_entry, keep_artist_checkbutton]
+metadata_widgets = [album_label, album_combobox, track_label, track_combobox, keep_artist_checkbutton]
+
+# error message widgets
+error_text = ScrolledText(error_frame, wrap=tkinter.WORD, height=10, state='disabled')
 
 # widget events
 artist_combobox_content.trace_add('write', artist_combobox_write)
 
-# grid (rows: 0-9 before mode dependent widgets, 10-19 mode dependent widgets, 20-29, after mode dependent widgets)
+# grid (rows: 0-9 before mode dependent widgets, 10-19 mode dependent widgets, 20-29 after mode dependent widgets)
 width = 6 # number of columns
 
 download_frame.grid(row=0, column=0, sticky=(N, E, W), padx=5, pady=5)
@@ -756,24 +793,20 @@ capitalize_title_button.grid(row=3, column=width // 3 * 2, columnspan=width // 3
 metadata_auto_button.grid(row=20, column=0, columnspan=width // 3, pady=(5, 0))
 metadata_button.grid(row=20, column=width // 3, columnspan=width // 3, pady=(5, 0))
 metadata_file_checkbutton.grid(row=20, column=width // 3 * 2, columnspan=width // 3, pady=(5, 0))
-error_text.grid(row=21, column=0, columnspan=width, sticky=(E, W), pady=(5, 0))
+
+error_frame.grid(row=2, column=0, sticky=(N, E, W), padx=5, pady=5)
+error_text.grid(row=1, column=0, columnspan=width, sticky=(E, W), pady=(5, 0))
 
 url_entry.focus()
 
 root.columnconfigure(0, weight=1)
 
-download_frame.columnconfigure(0, weight=3)
-download_frame.columnconfigure(1, weight=3)
-download_frame.columnconfigure(2, weight=1)
-download_frame.columnconfigure(3, weight=1)
-download_frame.columnconfigure(4, weight=3)
-download_frame.columnconfigure(5, weight=3)
-
-metadata_frame.columnconfigure(0, weight=3)
-metadata_frame.columnconfigure(1, weight=3)
-metadata_frame.columnconfigure(2, weight=1)
-metadata_frame.columnconfigure(3, weight=1)
-metadata_frame.columnconfigure(4, weight=3)
-metadata_frame.columnconfigure(5, weight=3)
+for f in [download_frame, metadata_frame, error_frame]:
+    f.columnconfigure(0, weight=3)
+    f.columnconfigure(1, weight=3)
+    f.columnconfigure(2, weight=1)
+    f.columnconfigure(3, weight=1)
+    f.columnconfigure(4, weight=3)
+    f.columnconfigure(5, weight=3)
 
 root.mainloop()
