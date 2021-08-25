@@ -336,11 +336,16 @@ def apply_metadata_once():
     update_combobox(False)
 
 def apply_metadata_auto():
+    previous_artist = artist_combobox.get()
+    previous_album = album_combobox.get()
+
     for f in Globals.files:
-        f['artist'] = f['artist'][0]
+        f['artist'] = f['artist'][0] if keep_artist_variable.get() == '0' else previous_artist
         f['title'] = f['title'][0]
         if metadata_mode.get() == 'vgm':
-            f['album'] = f['artist'] + ' OST'
+            f['album'] = f['artist'] + ' OST' if keep_artist_variable.get() == '0' else previous_album
+        elif keep_artist_variable.get() == '1':
+            f['album'] = previous_album
         else:
             f['album'] = f['album'][0] if f['album'] else ''
         f['track'] = f['track'][0] if f['track'] else ''
