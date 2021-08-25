@@ -305,6 +305,7 @@ def reset():
     url_entry.delete(0, 'end')
     download_button.state(['!disabled'])
     sync_button.state(['!disabled'])
+    sync_folder_variable.set('No folder selected')
     artist_combobox.set('')
     title_combobox.set('')
     artist_combobox['values'] = []
