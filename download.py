@@ -69,7 +69,7 @@ class Logger(object):
         print_error('warning', msg)
 
     def error(self, msg):
-        print_error('warning', msg)
+        print_error('error', msg)
 
 def generate_metadata_choices(metadata):
     choices = {}
@@ -685,7 +685,7 @@ root.option_add('*tearOff', FALSE)
 
 download_frame = ttk.Labelframe(root, padding=(3, 10, 12, 12), borderwidth=5, relief='ridge', text='Download')
 metadata_frame = ttk.Labelframe(root, padding=(3, 10, 12, 12), borderwidth=5, relief='ridge', text='Metadata')
-error_frame = ttk.Labelframe(root, padding=(3, 10, 12, 12), borderwidth=5, relief='ridge', text='Errors')
+error_frame = ttk.Labelframe(root, padding=(3, 10, 12, 12), borderwidth=5, relief='ridge', text='Info and Errors')
 
 # menu variables
 download_mode = StringVar()
@@ -710,6 +710,7 @@ swap_variable.set('0')
 artist_combobox_content = StringVar()
 
 keep_artist_variable = StringVar()
+keep_artist_variable.set('0')
 
 # menu
 menubar = Menu(root)
@@ -787,7 +788,7 @@ progress_label.grid(row=22, column=0, columnspan=width)
 video_label.grid(row=23, column=0, columnspan=width)
 
 metadata_frame.grid(row=1, column=0, sticky=(N, E, W), padx=5, pady=5)
-select_metadata_label.grid(row=0, column=0, sticky=W)
+select_metadata_label.grid(row=0, column=0, columnspan=width, sticky=W)
 artist_label.grid(row=1, column=0, columnspan=width // 6, sticky=W)
 artist_combobox.grid(row=1, column=width // 6, columnspan=4, sticky=(E, W))
 capitalize_artist_button.grid(row=1, column=5, padx=5, sticky=W)
