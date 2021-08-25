@@ -631,9 +631,9 @@ def update_download_mode():
         download_button['text'] = 'Download'
         download_button['command'] = download
     elif mode == 'sync':
-        sync_label.grid(row=10, column=0, columnspan=width)
-        sync_button.grid(row=20, column=0, columnspan=width // 3, pady=(5, 0))
-        sync_ask_delete_checkbutton.grid(row=20, column=width // 3 * 2, columnspan=width // 3, pady=(5, 0))
+        sync_button.grid(row=10, column=0, pady=(5, 0), sticky=W)
+        sync_label.grid(row=10, column=width // 6, columnspan=width - width // 6, sticky=W)
+        sync_ask_delete_checkbutton.grid(row=11, column=0, pady=(5, 0), sticky=W)
 
         download_button['text'] = 'Download and Sync'
         download_button['command'] = download
@@ -651,11 +651,11 @@ def update_metadata_mode():
     mode = metadata_mode.get()
 
     if mode == 'album' or mode == 'vgm':
-        album_label.grid(row=10, column=0, columnspan=width // 3)
-        album_combobox.grid(row=11, column=0, columnspan=width // 3, sticky=(E,W))
-        track_label.grid(row=10, column=width // 3 * 2, columnspan=width // 3)
-        track_combobox.grid(row=11, column=width // 3 * 2, columnspan=width // 3, sticky=(E,W))
-        keep_artist_checkbutton.grid(row=12, column=0, columnspan=width // 3)
+        album_label.grid(row=10, column=0, columnspan=width // 6, sticky=W, pady=2)
+        album_combobox.grid(row=10, column=width // 6, columnspan=4, sticky=(E, W))
+        track_label.grid(row=11, column=0, columnspan=width // 6, sticky=W, pady=2)
+        track_combobox.grid(row=11, column=width // 6, columnspan=4, sticky=(E, W))
+        keep_artist_checkbutton.grid(row=12, column=0, sticky=W)
 
         if Globals.current_file:
             file = Globals.current_file
@@ -675,7 +675,7 @@ def artist_combobox_write(*args):
 
 root = Tk()
 root.title('YouTube to MP3 Converter')
-root.geometry('900x600')
+root.geometry('800x720')
 root.option_add('*tearOff', FALSE)
 
 download_frame = ttk.Labelframe(root, padding=(3, 10, 12, 12), borderwidth=5, relief='ridge', text='Download')
@@ -755,9 +755,9 @@ metadata_auto_button = ttk.Button(metadata_frame, text='Apply metadata automatic
 metadata_button = ttk.Button(metadata_frame, text='Apply metadata', command=apply_metadata_once, state='disabled')
 metadata_file_checkbutton = ttk.Checkbutton(metadata_frame, text='Apply metadata from metadata.json automatically', variable=metadata_file_variable, command=apply_metadata_file)
 
-album_label = ttk.Label(metadata_frame, text='Select the Album')
+album_label = ttk.Label(metadata_frame, text='Select the album:')
 album_combobox = ttk.Combobox(metadata_frame)
-track_label = ttk.Label(metadata_frame, text='Select the track number')
+track_label = ttk.Label(metadata_frame, text='Select the track number:')
 track_combobox = ttk.Combobox(metadata_frame)
 keep_artist_checkbutton = ttk.Checkbutton(metadata_frame, text='Keep artist/album of previous video', variable=keep_artist_variable)
 
@@ -774,39 +774,35 @@ artist_combobox_content.trace_add('write', artist_combobox_write)
 width = 6 # number of columns
 
 download_frame.grid(row=0, column=0, sticky=(N, E, W), padx=5, pady=5)
-url_label.grid(row=0, column=0, columnspan=width)
-url_entry.grid(row=1, column=0, columnspan=width, sticky=(E, W))
-download_button.grid(row=20, column=width // 3, columnspan=width // 3, pady=(5, 0))
+url_label.grid(row=0, column=0, columnspan=width // 6, sticky=W)
+url_entry.grid(row=0, column=width // 6, columnspan=5, sticky=(E, W))
+download_button.grid(row=20, column=width // 6, pady=(5, 0), sticky=W)
 download_progress.grid(row=21, column=0, columnspan=width, sticky=(E, W))
 progress_label.grid(row=22, column=0, columnspan=width)
 video_label.grid(row=23, column=0, columnspan=width)
 
 metadata_frame.grid(row=1, column=0, sticky=(N, E, W), padx=5, pady=5)
-select_metadata_label.grid(row=0, column=0, columnspan=width)
-artist_label.grid(row=1, column=0, columnspan=width // 3)
-title_label.grid(row=1, column=width // 3 * 2, columnspan=width // 3)
-artist_combobox.grid(row=2, column=0, columnspan=width // 3, sticky=(E, W))
-swap_checkbutton.grid(row=2, column=width // 3, columnspan=width // 3, sticky=(E, W), padx=(5, 5))
-title_combobox.grid(row=2, column=width // 3 * 2, columnspan=width // 3, sticky=(E, W))
-capitalize_artist_button.grid(row=3, column=0, columnspan=width // 3, padx=(0, 5), pady=(5, 0))
-capitalize_title_button.grid(row=3, column=width // 3 * 2, columnspan=width // 3, padx=(5, 0), pady=(5, 0))
-metadata_auto_button.grid(row=20, column=0, columnspan=width // 3, pady=(5, 0))
-metadata_button.grid(row=20, column=width // 3, columnspan=width // 3, pady=(5, 0))
-metadata_file_checkbutton.grid(row=20, column=width // 3 * 2, columnspan=width // 3, pady=(5, 0))
+select_metadata_label.grid(row=0, column=0, sticky=W)
+artist_label.grid(row=1, column=0, columnspan=width // 6, sticky=W)
+artist_combobox.grid(row=1, column=width // 6, columnspan=4, sticky=(E, W))
+capitalize_artist_button.grid(row=1, column=5, padx=5, sticky=W)
+swap_checkbutton.grid(row=2, column=width // 6, columnspan=5, sticky=W)
+title_label.grid(row=3, column=0, columnspan=width // 6, sticky=W)
+title_combobox.grid(row=3, column=width // 6, columnspan=4, sticky=(E, W))
+capitalize_title_button.grid(row=3, column=5, padx=5, sticky=W)
+metadata_file_checkbutton.grid(row=20, column=0, pady=(5, 0), sticky=W)
+metadata_auto_button.grid(row=21, column=0, columnspan=1, pady=(5, 0), sticky=W)
+metadata_button.grid(row=21, column=width // 6, columnspan=4, pady=(5, 0), sticky=W)
 
 error_frame.grid(row=2, column=0, sticky=(N, E, W), padx=5, pady=5)
-error_text.grid(row=1, column=0, columnspan=width, sticky=(E, W), pady=(5, 0))
+error_text.grid(row=0, column=0, columnspan=width, sticky=(E, W), pady=(5, 0))
 
 url_entry.focus()
 
 root.columnconfigure(0, weight=1)
 
 for f in [download_frame, metadata_frame, error_frame]:
-    f.columnconfigure(0, weight=3)
-    f.columnconfigure(1, weight=3)
-    f.columnconfigure(2, weight=1)
-    f.columnconfigure(3, weight=1)
-    f.columnconfigure(4, weight=3)
-    f.columnconfigure(5, weight=3)
+    for i in range(6):
+        f.columnconfigure(i, weight=1)
 
 root.mainloop()
