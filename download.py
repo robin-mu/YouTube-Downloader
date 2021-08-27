@@ -360,6 +360,8 @@ def apply_metadata_file():
         apply_metadata(id, data)
         update_combobox(False)
 
+# download mode dependent methods
+# download modes that download files (Download, Sync)
 def download():
     # create out folder if it doesn't exist
     try:
@@ -416,22 +418,7 @@ def download():
     }
 
     ydl = youtube_dl.YoutubeDL(ydl_opts)
-    info = ydl.extract_info(url_entry.get(), download = not download_mode.get() == 'metadata') # ie_key='Youtube' could be faster
-
-    # save metadata and return if "download metadata" mode is selected
-    if download_mode.get() == 'metadata':
-        try:
-            with open(f'out/{safe_filename(info["title"])}.json', 'w') as f:
-                json.dump(info, f)
-        except OSError as e:
-            print_error('OS', e)
-
-        download_button.state(['!disabled'])
-        url_entry.state(['!disabled'])
-        url_entry.delete(0, 'end')
-        progress.set('')
-        ctypes.windll.kernel32.SetThreadExecutionState(0x80000000)
-        return
+    info = ydl.extract_info(url_entry.get()) # ie_key='Youtube' could be faster
     
     # reset if info is empty
     if not info:
@@ -522,7 +509,8 @@ def download():
         url_entry.delete(0, 'end')
         progress.set('')
 
-def calc_length():
+# download modes that download metadata (Calculate length, Download metadata, Backup playlist)
+def download_metadata():
     debug.set('1')
 
     download_button.state(['disabled'])
@@ -540,24 +528,101 @@ def calc_length():
     ydl = youtube_dl.YoutubeDL(ydl_opts)
     info = ydl.extract_info(url_entry.get(), download=False) # ie_key='Youtube' could be faster
 
-    def convert_time(sec):
-        h = sec // 3600
-        min = sec % 3600 // 60
-        seconds = sec % 60
-        return f'{h}:{"0" if min < 10 else ""}{min}:{"0" if seconds < 10 else ""}{seconds}'
+    # mode dependent actions
+    mode = download_mode.get()
+    if mode == 'metadata':
+        try:
+            with open(f'out/{safe_filename(info["title"])}.json', 'w') as f:
+                json.dump(info, f)
+        except OSError as e:
+            print_error('OS', e)
+        except Exception as e:
+            print_error('Error', e)
 
-    duration = 0
-    playlist = False
-    if '_type' in info:
-        if info['_type'] == 'playlist':
-            playlist = True
-            for entry in info['entries']:
-                if entry:
-                    duration += entry['duration']
-    elif info['duration']:
-        duration = info['duration']
+    elif mode == 'length':
+        def convert_time(sec):
+            h = sec // 3600
+            min = sec % 3600 // 60
+            seconds = sec % 60
+            return f'{h}:{"0" if min < 10 else ""}{min}:{"0" if seconds < 10 else ""}{seconds}'
 
-    print_error('length', f'Length of {"playlist" if playlist else "video"} "{info["title"]}": {convert_time(duration)}')
+        duration = 0
+        playlist = False
+        if '_type' in info:
+            if info['_type'] == 'playlist':
+                playlist = True
+                for entry in info['entries']:
+                    if entry:
+                        duration += entry['duration']
+        elif info['duration']:
+            duration = info['duration']
+
+        print_error('length', f'Length of {"playlist" if playlist else "video"} "{info["title"]}": {convert_time(duration)}')
+
+    elif mode == 'backup':
+        # make backups folder if it doesn't exist
+        try:
+            os.mkdir('backups')
+        except OSError:
+            pass
+
+        # load old file if the playlist has been backed up before
+        old_file = {}
+        try:
+            with open(f'backups/{info["id"]}.json','r') as f:
+                old_file = json.load(f)
+        except Exception as e:
+            print_error('backup', 'No earlier backup found')
+
+        # extract title, uploader and description from info
+        new_file = {'title': info['title']}
+        if '_type' in info:
+            if info['_type'] == 'playlist':
+                for entry in info['entries']:
+                    if entry:
+                        new_file[entry['id']] = {'title': entry['title'], 'uploader': entry['uploader'], 'description': entry['description']}
+        # compare both files if the playlist has been backed up before
+        if old_file:
+            both = []
+            for entry in old_file:
+                if entry in new_file:
+                    both.append(entry)
+
+            deleted = {k: v for (k, v) in old_file.items() if not k in both}
+            added = {k: v for (k, v) in new_file.items() if not k in both}
+
+            if added:
+                print_error('backup', f'{len(added)} videos have been added to the playlist:')
+                for entry in added.values():
+                    print_error('backup', f'{entry["title"]}, {entry["uploader"]}')
+
+            if deleted:
+                print_error('backup', f'{len(deleted)} videos have been deleted from the playlist:')
+                for entry in deleted.values():
+                    print_error('backup', f'{entry["title"]}, {entry["uploader"]}')
+
+            if not added and not deleted:
+                print_error('backup', 'No changes found')
+
+            # save changes to file
+            changes = {'time': datetime.now().strftime('%Y-%m-%d, %H:%M:%S'),'added': added, 'deleted': deleted}
+            changes_file = []
+            try:
+                with open(f'backups/{info["id"]}_changes.json', 'r') as f:
+                    changes_file = json.load(f)
+            except Exception as e:
+                print_error('backup', e)
+
+            with open(f'backups/{info["id"]}_changes.json', 'w') as f:
+                changes_file.append(changes)
+                json.dump(changes_file, f)
+                print_error('backup', f'Changes have been saved to {f.name}')
+        
+        # save new data to old file
+        with open(f'backups/{info["id"]}.json', 'w') as f:
+            json.dump(new_file, f)
+            print_error('backup', f'New playlist data has been backed up to {f.name}')
+
     download_button.state(['!disabled'])
     url_entry.state(['!disabled'])
     url_entry.delete(0, 'end')
@@ -645,10 +710,13 @@ def update_download_mode():
         download_button['command'] = download
     elif mode == 'length':
         download_button['text'] = 'Calculate length'
-        download_button['command'] = calc_length
+        download_button['command'] = download_metadata
     elif mode == 'metadata':
         download_button['text'] = 'Download Metadata'
-        download_button['command'] = download
+        download_button['command'] = download_metadata
+    elif mode == 'backup':
+        download_button['text'] = 'Backup Playlist/Search for Changes'
+        download_button['command'] = download_metadata
 
 def update_metadata_mode():
     for w in metadata_widgets:
@@ -723,6 +791,7 @@ menu_download_mode.add_radiobutton(label='Download', variable=download_mode, val
 menu_download_mode.add_radiobutton(label='Sync with Folder', variable=download_mode, value='sync', command=update_download_mode)
 menu_download_mode.add_radiobutton(label='Calculate length of Playlist', variable=download_mode, value='length', command=update_download_mode)
 menu_download_mode.add_radiobutton(label='Download metadata', variable=download_mode, value='metadata', command=update_download_mode)
+menu_download_mode.add_radiobutton(label='Backup Playlist/Search for Changes', variable=download_mode, value='backup', command=update_download_mode)
 
 menu_metadata_mode = Menu(menubar)
 menubar.add_cascade(menu=menu_metadata_mode, label='Metadata Mode')
