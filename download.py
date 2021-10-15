@@ -153,13 +153,13 @@ def generate_metadata_choices(metadata):
             artist_choices = [i.replace(s, '').strip() for i in artist_choices]
             title_choices = [i.replace(s, '').strip() for i in title_choices]
     
-    if 'playlist' in metadata:
+    if 'playlist' in metadata and metadata['playlist']:
         choices['playlist'] = metadata['playlist']
         album_choices.append(metadata['playlist'])
-    if 'playlist_index' in metadata:
+    if 'playlist_index' in metadata and metadata['playlist_index']:
         choices['playlist_index'] = metadata['playlist_index']
         track_choices.append(metadata['playlist_index'])
-    if 'n_entries' in metadata:
+    if 'n_entries' in metadata and metadata['n_entries']:
         choices['playlist_length'] = metadata['n_entries']
 
     # remove empty and duplicate list entries
@@ -310,7 +310,7 @@ def reset():
     title_combobox.set('')
     artist_combobox['values'] = []
     title_combobox['values'] = []
-    progress.set('')
+    progress_text.set('')
     video.set('')
     select_metadata_variable.set('')
     swap_checkbutton.state(['disabled'])
@@ -426,46 +426,44 @@ def download():
         sync_button.state(['!disabled'])
         url_entry.state(['!disabled'])
         url_entry.delete(0, 'end')
-        progress.set('')
+        progress_text.set('')
         ctypes.windll.kernel32.SetThreadExecutionState(0x80000000)
         return
     
     video.set('')
     
-    # check which videos haven't been downloaded
-    def get_not_downloaded(info):
-        results = []
+    # check which videos haven't been downloaded when downloading a playlist
+    if info['webpage_url_basename'] == 'playlist':
+        def get_not_downloaded(info):
+            results = ''
 
-        if '_type' in info:
-            if info['_type'] == 'playlist':
-                for entry in info['entries']:
-                    if entry['id']:
-                        if not os.path.isfile(os.path.join('out', entry['id'] + '.mp3')) and not entry['id'] in Globals.already_finished:
-                            results.append(entry['id'])
-        elif info['id'] and not os.path.isfile(os.path.join('out', info['id'] + '.mp3')) and not info['id'] in Globals.already_finished:
-            results.append(info['id'])
-        
-        return results
+            for entry in info['entries']:
+                if entry['id']:
+                    if not os.path.isfile(os.path.join('out', entry['id'] + '.mp3')) and not entry['id'] in Globals.already_finished:
+                        results += str(entry["playlist_index"]) + ','
+
+            return results.rstrip(',')
     
-    not_downloaded = get_not_downloaded(info)
+        not_downloaded = get_not_downloaded(info)
     
-    # try to download all not downloaded videos again
-    if not_downloaded:
-        print_error('download', f'{len(not_downloaded)} videos have not been downloaded. Trying again...')
-        ydl.download(not_downloaded)
+        # try to download all not downloaded videos again
+        if not_downloaded:
+            print_error('download', f'{(len(not_downloaded) + 1) // 2} videos have not been downloaded. Trying again...')
+            ydl_opts['playlist_items'] = not_downloaded
+            ydl = youtube_dl.YoutubeDL(ydl_opts)
+            ydl.download([url_entry.get()])
     
-    not_downloaded = get_not_downloaded(info)
+        not_downloaded = get_not_downloaded(info)
     
-    # print IDs of all videos that still couldn't be downloaded
-    if not_downloaded:
-        print_error('download', f'{len(not_downloaded)} videos could not be downloaded:')
-        for f in not_downloaded:
-            print_error('download', f)
+        # print IDs of all videos that still couldn't be downloaded
+        if not_downloaded:
+            print_error('download', f'{(len(not_downloaded) + 1) // 2} videos could not be downloaded. Their indexes are: {not_downloaded}')
     
     progress_bar.set(0)
 
     time = (datetime.now() - Globals.start).seconds
-    progress.set(f"Downloaded {len(Globals.files)} video{'s' if len(Globals.files) != 1 else ''} in {time // 60}:{'0' if (time % 60) < 10 else ''}{time % 60}")
+    progress_text.set(f"Downloaded {len(Globals.files)} video{'s' if len(Globals.files) != 1 else ''} in {time // 60}:{'0' if (time % 60) < 10 else ''}{time % 60}")
+    video.set('')
     
     # delete all files from the destination folder that are not in the dont_delete list (which means they were removed from the playlist)
     if Globals.already_finished and Globals.folder:
@@ -490,7 +488,7 @@ def download():
         sync_button.state(['!disabled'])
         url_entry.state(['!disabled'])
         url_entry.delete(0, 'end')
-        progress.set('')
+        progress_text.set('')
         return
     
     update_combobox(True)
@@ -507,7 +505,7 @@ def download():
         sync_button.state(['!disabled'])
         url_entry.state(['!disabled'])
         url_entry.delete(0, 'end')
-        progress.set('')
+        progress_text.set('')
 
 # download modes that download metadata (Calculate length, Download metadata, Backup playlist)
 def download_metadata():
@@ -548,12 +546,11 @@ def download_metadata():
 
         duration = 0
         playlist = False
-        if '_type' in info:
-            if info['_type'] == 'playlist':
-                playlist = True
-                for entry in info['entries']:
-                    if entry:
-                        duration += entry['duration']
+        if info['webpage_url_basename'] == 'playlist':
+            playlist = True
+            for entry in info['entries']:
+                if entry:
+                    duration += entry['duration']
         elif info['duration']:
             duration = info['duration']
 
@@ -576,11 +573,10 @@ def download_metadata():
 
         # extract title, uploader and description from info
         new_file = {'title': info['title']}
-        if '_type' in info:
-            if info['_type'] == 'playlist':
-                for entry in info['entries']:
-                    if entry:
-                        new_file[entry['id']] = {'title': entry['title'], 'uploader': entry['uploader'], 'description': entry['description']}
+        if info['webpage_url_basename'] == 'playlist':
+            for entry in info['entries']:
+                if entry:
+                    new_file[entry['id']] = {'title': entry['title'], 'uploader': entry['uploader'], 'description': entry['description']}
         # compare both files if the playlist has been backed up before
         if old_file:
             both = []
@@ -637,20 +633,22 @@ def hook(d):
     if d['status'] == 'downloading':
         try:
             if 'playlist' in file:
-                progress_bar.set((file['playlist_index'] - 1) / file['playlist_length'] * 100 + (d['downloaded_bytes'] / d['total_bytes'] * 100) / file['playlist_length'])
+                progress = ((file['playlist_index'] - 1) / file['playlist_length'] + d['downloaded_bytes'] / d['total_bytes'] / file['playlist_length']) * 100
                 time = (datetime.now() - Globals.start).seconds
-                progress.set(f"Downloading playlist \"{file['playlist']}\", {file['playlist_index']}/{file['playlist_length']} ({round(progress_bar.get(), 1)}% finished, {time // 60}:{'0' if (time % 60) < 10 else ''}{time % 60} elapsed)")
+                progress_bar.set(progress)
+
+                progress_text.set(f"Downloading playlist \"{file['playlist']}\", {file['playlist_index']}/{file['playlist_length']} ({round(progress, 1)}% finished, {time // 60}:{'0' if (time % 60) < 10 else ''}{time % 60} elapsed)")
                 video.set(f"Current video: {file['originaltitle']}, {d['downloaded_bytes'] * 100 // d['total_bytes']}% finished, {d['eta'] // 60}:{'0' if (d['eta'] % 60) < 10 else ''}{d['eta'] % 60} left")
             else:
                 progress_bar.set(d['downloaded_bytes'] / d['total_bytes'] * 100)
-                progress.set(f"Downloading: {file['originaltitle']}, {round(progress_bar.get())}% finished, {d['eta'] // 60}:{'0' if (d['eta'] % 60) < 10 else ''}{d['eta'] % 60} left")
-        except: # error for NoneType // int if some values of the dict aren't there yet
+                progress_text.set(f"Downloading: {file['originaltitle']}, {round(progress_bar.get())}% finished, {d['eta'] // 60}:{'0' if (d['eta'] % 60) < 10 else ''}{d['eta'] % 60} left")
+        except Exception as e: # error for NoneType // int if some values of the dict aren't there yet
             video.set('Downloading...')
     if d['status'] == 'finished':
         if 'playlist' in file:
             video.set('Converting...')
         else:
-            progress.set('Converting...')
+            progress_text.set('Converting...')
     Tk.update(root)
     
 def get_info_dict(info_dict):
@@ -658,6 +656,9 @@ def get_info_dict(info_dict):
     if info_dict['id'] in Globals.already_finished:
         Globals.dont_delete.append(Globals.already_finished[info_dict['id']])
         print_error('download', f"{info_dict['id']}: File with metadata already present")
+
+        # update progress bar and text
+
         return f"{info_dict['id']}: File with metadata already present"
     
     file = generate_metadata_choices(info_dict)
@@ -747,6 +748,9 @@ def artist_combobox_write(*args):
         artist = artist_combobox.get()
         album_combobox.set(artist if artist.endswith(' OST') else artist + ' OST')
 
+# change current working directory to script location
+os.chdir(os.path.dirname(os.path.realpath(__file__)))
+
 root = Tk()
 root.title('YouTube to MP3 Converter')
 root.geometry('800x720')
@@ -769,7 +773,7 @@ sync_folder_variable = StringVar()
 sync_folder_variable.set('No folder selected')
 sync_ask_delete = StringVar()
 sync_ask_delete.set('1')
-progress = StringVar()
+progress_text = StringVar()
 progress_bar = DoubleVar()
 video = StringVar()
 select_metadata_variable = StringVar()
@@ -811,7 +815,7 @@ sync_label = ttk.Label(download_frame, textvariable=sync_folder_variable)
 sync_button = ttk.Button(download_frame, text='Select folder to sync with', command=sync_folder)
 download_button = ttk.Button(download_frame, text='Download', command=download)
 sync_ask_delete_checkbutton = ttk.Checkbutton(download_frame, text='Ask before deleting files', variable=sync_ask_delete)
-progress_label = ttk.Label(download_frame, text='', textvariable=progress)
+progress_label = ttk.Label(download_frame, text='', textvariable=progress_text)
 download_progress = ttk.Progressbar(download_frame, orient=HORIZONTAL, mode='determinate', variable=progress_bar)
 video_label = ttk.Label(download_frame, text='', textvariable=video)
 
