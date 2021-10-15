@@ -27,6 +27,10 @@ def safe_filename(filename):
         filename = filename.replace(c, '')
     return filename
 
+# convert number of seconds to string with format minutes:seconds
+def sec_to_min(sec):
+    return f"{sec // 60}:{'0' if (sec % 60) < 10 else ''}{sec % 60}"
+
 def print_error(process, msg):
     msg = f"[{datetime.now().strftime('%H:%M:%S')}] [{process}] {msg}"
     error_text['state'] = 'normal'
@@ -626,24 +630,52 @@ def download_metadata():
     # reactivate windows sleep mode
     ctypes.windll.kernel32.SetThreadExecutionState(0x80000000)
 
+# methods for getting information about videos/playlists from youtube_dl while downloading to update the GUI
+# video downloading,    call from hook:          originaltitle, downloaded_bytes, total_bytes, eta
+# video downloading,    call from get_info_dict: title, playlist(None), playlist_index(None)
+# playlist downloading, call from hook:          originaltitle, playlist, playlist_index, playlist_length, downloaded_bytes, total_bytes, eta
+# playlist downloading, call from get_info_dict: title, playlist, playlist_index, n_entries
+def update_progress(video_info, download_info):
+    try:
+        title = video_info['originaltitle'] if 'originaltitle' in video_info else video_info['title']
+    
+        if 'playlist' in video_info and video_info['playlist']: # playlist download
+            length = video_info['n_entries'] if 'n_entries' in video_info else video_info['playlist_length']
+        
+            time = sec_to_min((datetime.now() - Globals.start).seconds)
+            progress = ((video_info['playlist_index'] - 1) / length 
+                       + ((download_info['downloaded_bytes'] / download_info['total_bytes'] / length) if download_info else 0)) * 100
+
+            progress_content = (f"Downloading playlist \"{video_info['playlist']}\"" +
+                               (f", {video_info['playlist_index']}/{length} ({round(progress, 1)}% finished, " if progress <= 100 else ' (') +
+                               f"{time} elapsed)")
+
+            video_content = (f"Current video: {title}" + 
+                            (f", {download_info['downloaded_bytes'] * 100 // download_info['total_bytes']}% finished, {sec_to_min(download_info['eta'])} left" if download_info else ''))
+
+        else:                                                    # video download
+            progress = (download_info['downloaded_bytes'] / download_info['total_bytes'] * 100) if download_info else 0
+            progress_content = (f"Downloading: {title}" +
+                               (f", {round(progress)}% finished, {sec_to_min(download_info['eta'])} left" if download_info else ''))
+            video_content = ''
+
+        progress_bar.set(progress)
+        progress_text.set(progress_content)
+        video.set(video_content)
+    except Exception as e:
+        print_error("GUI updater", e)
+        progress_text.set('Downloading...')
+        video.set('')
+
+    Tk.update(root)
+
+
 def hook(d):
     # get current file
     file = Globals.files[-1]
     
     if d['status'] == 'downloading':
-        try:
-            if 'playlist' in file:
-                progress = ((file['playlist_index'] - 1) / file['playlist_length'] + d['downloaded_bytes'] / d['total_bytes'] / file['playlist_length']) * 100
-                time = (datetime.now() - Globals.start).seconds
-                progress_bar.set(progress)
-
-                progress_text.set(f"Downloading playlist \"{file['playlist']}\", {file['playlist_index']}/{file['playlist_length']} ({round(progress, 1)}% finished, {time // 60}:{'0' if (time % 60) < 10 else ''}{time % 60} elapsed)")
-                video.set(f"Current video: {file['originaltitle']}, {d['downloaded_bytes'] * 100 // d['total_bytes']}% finished, {d['eta'] // 60}:{'0' if (d['eta'] % 60) < 10 else ''}{d['eta'] % 60} left")
-            else:
-                progress_bar.set(d['downloaded_bytes'] / d['total_bytes'] * 100)
-                progress_text.set(f"Downloading: {file['originaltitle']}, {round(progress_bar.get())}% finished, {d['eta'] // 60}:{'0' if (d['eta'] % 60) < 10 else ''}{d['eta'] % 60} left")
-        except Exception as e: # error for NoneType // int if some values of the dict aren't there yet
-            video.set('Downloading...')
+        update_progress(file, d)
     if d['status'] == 'finished':
         if 'playlist' in file:
             video.set('Converting...')
@@ -657,7 +689,7 @@ def get_info_dict(info_dict):
         Globals.dont_delete.append(Globals.already_finished[info_dict['id']])
         print_error('download', f"{info_dict['id']}: File with metadata already present")
 
-        # update progress bar and text
+        update_progress(info_dict, [])
 
         return f"{info_dict['id']}: File with metadata already present"
     
@@ -673,8 +705,10 @@ def get_info_dict(info_dict):
     # don't download if file is already present
     if os.path.isfile(os.path.join('out', info_dict['id'] + '.mp3')):
         print_error('download', f"{info_dict['id']}: File already present")
+        update_progress(info_dict, [])
         return f"{info_dict['id']}: File already present"
     
+# button click methods
 def sync_folder():
     Globals.folder = filedialog.askdirectory()
     sync_folder_variable.set(f'Folder: {Globals.folder}' if Globals.folder else 'No folder selected')
@@ -694,6 +728,7 @@ def capitalize_artist():
 def capitalize_title():
     title_combobox.set(title_combobox.get().title())
 
+# menu click methods
 def update_download_mode():
     for w in download_widgets:
         w.grid_forget()
