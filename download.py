@@ -11,6 +11,7 @@ import json
 import shutil # moving files between drives when syncing
 import ctypes # prevent sleep mode when downloading
 from pprint import pprint
+import subprocess
 
 class Globals:
     folder = '' # folder to sync with
@@ -308,8 +309,8 @@ def reset():
     url_entry.state(['!disabled'])
     url_entry.delete(0, 'end')
     download_button.state(['!disabled'])
-    sync_button.state(['!disabled'])
-    sync_folder_variable.set('No folder selected')
+    output_folder_button.state(['!disabled'])
+    output_folder_variable.set('Folder: Default (click to open)')
     artist_combobox.set('')
     title_combobox.set('')
     artist_combobox['values'] = []
@@ -380,7 +381,7 @@ def download():
     Globals.start = datetime.now()
     
     download_button.state(['disabled'])
-    sync_button.state(['disabled'])
+    output_folder_button.state(['disabled'])
     url_entry.state(['disabled'])
     
     # add IDs of already finished files to a list if sync is enabled
@@ -427,7 +428,7 @@ def download():
     # reset if info is empty
     if not info:
         download_button.state(['!disabled'])
-        sync_button.state(['!disabled'])
+        output_folder_button.state(['!disabled'])
         url_entry.state(['!disabled'])
         url_entry.delete(0, 'end')
         progress_text.set('')
@@ -489,7 +490,7 @@ def download():
     # don't start setting metadata if the files list is empty
     if not Globals.files:
         download_button.state(['!disabled'])
-        sync_button.state(['!disabled'])
+        output_folder_button.state(['!disabled'])
         url_entry.state(['!disabled'])
         url_entry.delete(0, 'end')
         progress_text.set('')
@@ -506,7 +507,7 @@ def download():
         metadata_button.state(['!disabled'])
     else:
         download_button.state(['!disabled'])
-        sync_button.state(['!disabled'])
+        output_folder_button.state(['!disabled'])
         url_entry.state(['!disabled'])
         url_entry.delete(0, 'end')
         progress_text.set('')
@@ -709,9 +710,16 @@ def get_info_dict(info_dict):
         return f"{info_dict['id']}: File already present"
     
 # button click methods
-def sync_folder():
+def select_output_folder():
     Globals.folder = filedialog.askdirectory()
-    sync_folder_variable.set(f'Folder: {Globals.folder}' if Globals.folder else 'No folder selected')
+    output_folder_variable.set('Folder: ' + (Globals.folder if Globals.folder else 'Default') + ' (click to open)')
+
+def open_output_folder(event):
+    if Globals.folder:
+        folder = Globals.folder.replace('/', "\\")
+        subprocess.run(f'explorer.exe "{folder}"')
+    else:
+        subprocess.run('explorer.exe out')
     
 def swap():
     temp = artist_combobox.get()
@@ -735,11 +743,13 @@ def update_download_mode():
 
     mode = download_mode.get()
     if mode == 'download':
+        output_folder_button['text'] = 'Select output folder'
         download_button['text'] = 'Download'
         download_button['command'] = download
+        output_folder_button.grid(row=1, column=0, pady=(5, 0), sticky=W)
+        output_folder_label.grid(row=1, column=width // 6, columnspan=width - width // 6, sticky=W)
     elif mode == 'sync':
-        sync_button.grid(row=10, column=0, pady=(5, 0), sticky=W)
-        sync_label.grid(row=10, column=width // 6, columnspan=width - width // 6, sticky=W)
+        output_folder_button['text'] = 'Select folder to sync with'
         sync_ask_delete_checkbutton.grid(row=11, column=0, pady=(5, 0), sticky=W)
 
         download_button['text'] = 'Download and Sync'
@@ -804,8 +814,8 @@ debug = StringVar()
 debug.set('0')
 
 # widget variables
-sync_folder_variable = StringVar()
-sync_folder_variable.set('No folder selected')
+output_folder_variable = StringVar()
+output_folder_variable.set('Folder: Default (click to open)')
 sync_ask_delete = StringVar()
 sync_ask_delete.set('1')
 progress_text = StringVar()
@@ -846,8 +856,8 @@ menu_debug.add_checkbutton(label='Show debug messages', variable=debug, onvalue=
 # download widgets
 url_label = ttk.Label(download_frame, text='Input video/playlist URL or search query here:')
 url_entry = ttk.Entry(download_frame)
-sync_label = ttk.Label(download_frame, textvariable=sync_folder_variable)
-sync_button = ttk.Button(download_frame, text='Select folder to sync with', command=sync_folder)
+output_folder_label = ttk.Label(download_frame, textvariable=output_folder_variable)
+output_folder_button = ttk.Button(download_frame, text='Select output folder', command=select_output_folder)
 download_button = ttk.Button(download_frame, text='Download', command=download)
 sync_ask_delete_checkbutton = ttk.Checkbutton(download_frame, text='Ask before deleting files', variable=sync_ask_delete)
 progress_label = ttk.Label(download_frame, text='', textvariable=progress_text)
@@ -855,7 +865,7 @@ download_progress = ttk.Progressbar(download_frame, orient=HORIZONTAL, mode='det
 video_label = ttk.Label(download_frame, text='', textvariable=video)
 
 # download mode dependent widgets
-download_widgets = [sync_label, sync_button, sync_ask_delete_checkbutton]
+download_widgets = [sync_ask_delete_checkbutton]
 
 # metadata widgets
 select_metadata_label = ttk.Label(metadata_frame, text='', textvariable=select_metadata_variable)
@@ -883,6 +893,7 @@ metadata_widgets = [album_label, album_combobox, track_label, track_combobox, ke
 error_text = ScrolledText(error_frame, wrap=tkinter.WORD, height=10, state='disabled')
 
 # widget events
+output_folder_label.bind("<Button-1>", open_output_folder)
 artist_combobox_content.trace_add('write', artist_combobox_write)
 
 # grid (rows: 0-9 before mode dependent widgets, 10-19 mode dependent widgets, 20-29 after mode dependent widgets)
@@ -891,6 +902,8 @@ width = 6 # number of columns
 download_frame.grid(row=0, column=0, sticky=(N, E, W), padx=5, pady=5)
 url_label.grid(row=0, column=0, columnspan=width // 6, sticky=W)
 url_entry.grid(row=0, column=width // 6, columnspan=5, sticky=(E, W))
+output_folder_button.grid(row=1, column=0, pady=(5, 0), sticky=W)
+output_folder_label.grid(row=1, column=width // 6, columnspan=width - width // 6, sticky=W)
 download_button.grid(row=20, column=width // 6, pady=(5, 0), sticky=W)
 download_progress.grid(row=21, column=0, columnspan=width, sticky=(E, W))
 progress_label.grid(row=22, column=0, columnspan=width)
