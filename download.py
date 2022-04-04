@@ -147,7 +147,7 @@ def main():
         def error(self, msg):
             print_error('error', msg)
 
-    def generate_metadata_choices(metadata: dict[str, Any]):
+    def generate_metadata_choices(metadata: dict[str, Any]) -> dict[str, Any]:
         choices = {'id': metadata['id'], 'originaltitle': metadata['title']}
 
         title_choices: list[str] = []
@@ -406,12 +406,32 @@ def main():
                     classical_work_combobox.set(file['work'][0])
                 if file['comment']:
                     classical_comment_combobox['values'] = file['comment']
+                classical_cut_entry.delete(0, 'end')
+                if 'cut' in Globals.metadata_file[file['id']]:
+                    classical_cut_entry.insert(0, Globals.metadata_file[file['id']]['cut'])
         else:
             reset()
 
     def apply_metadata(id, data):
         path = os.path.join('out', id + '.mp3')
-        filename = safe_filename(f'{data["artist"]} - {data["title"]}.mp3')
+        filename = os.path.join('out', safe_filename(f'{data["artist"]} - {data["title"]}.mp3'))
+
+        # cut mp3 in classical mode
+        if 'cut' in data:
+            # create file with cut information
+            try:
+                with open('cut.info', 'w') as f:
+                    for cut in data['cut'].split('-'):
+                        f.write(f"file '{path}'\n")
+                        f.write(f'inpoint {cut.split()[0]}\n')
+                        f.write(f'outpoint {cut.split()[1]}\n')
+
+                # run ffmpeg to cut the file
+                subprocess.run(f'ffmpeg.exe -f concat -safe 0 -i cut.info -c copy "{filename}"')
+                os.remove(path)
+                path = filename
+            except Exception as e:
+                print_error('cut', e)
 
         try:
             id3 = ID3(path)
@@ -427,17 +447,21 @@ def main():
                 if metadata_mode.get() == 'vgm':
                     id3.add(TCON(text='VGM'))
 
-            if (metadata_mode.get() == 'classical'):
+            if metadata_mode.get() == 'classical':
                 id3.add(TCON(text='Klassik'))
             id3.save()
 
-            os.rename(path, os.path.join('out', filename))
+            if 'cut' not in data:
+                os.rename(path, filename)
         except MutagenError as e:
             print_error('mutagen', e)
         except OSError as e:
             print_error('OS', e)
 
         Globals.metadata_file[id] = {key: data[key] for key in ['artist', 'title', 'album', 'track']}
+        if 'cut' in data:
+            Globals.metadata_file[id]['cut'] = data['cut']
+            os.remove('cut.info')
 
     def reset():
         # save metadata to file
@@ -502,6 +526,7 @@ def main():
             classical_work_combobox['values'] = []
             classical_comment_combobox.set('')
             classical_comment_combobox['values'] = []
+            classical_cut_entry.delete(0, 'end')
 
     def apply_metadata_once():
         file = Globals.current_file
@@ -509,6 +534,8 @@ def main():
         file['title'] = title_combobox.get()
         file['album'] = album_combobox.get()
         file['track'] = track_combobox.get()
+        if metadata_mode.get() == 'classical' and classical_cut_entry.get().strip():
+            file['cut'] = classical_cut_entry.get().strip()
         apply_metadata(file['id'], file)
         update_combobox(False)
 
@@ -530,8 +557,8 @@ def main():
         reset()
 
     def apply_metadata_file():
-        if metadata_file_variable.get() == '1' and Globals.current_file and Globals.current_file['id'] \
-                in Globals.metadata_file:
+        if metadata_file_variable.get() == '1' and Globals.current_file and\
+                                                   Globals.current_file['id'] in Globals.metadata_file:
             id = Globals.current_file['id']
             data = Globals.metadata_file[id]
             apply_metadata(id, data)
@@ -755,7 +782,7 @@ def main():
                 print_error('backup', 'No earlier backup found')
 
             # extract title, uploader and description from info
-            new_file = {'title': info['title']}
+            new_file: dict[str, Any] = {'title': info['title']}
             if info['webpage_url_basename'] == 'playlist':
                 for entry in info['entries']:
                     if entry:
@@ -773,14 +800,14 @@ def main():
 
                 if added:
                     print_error('backup', f'{len(added)} videos have been added to the playlist:')
-                    for entry in added.values():
-                        print_error('backup', f'{entry["title"]}, {entry["uploader"]}')
+                    for entry in added:
+                        print_error('backup', f'{added[entry]["title"]}, {added[entry]["uploader"]}, {entry}')
                     print_error('backup', '------------------------------')
 
                 if deleted:
                     print_error('backup', f'{len(deleted)} videos have been deleted from the playlist:')
-                    for entry in deleted.values():
-                        print_error('backup', f'{entry["title"]}, {entry["uploader"]}')
+                    for entry in deleted:
+                        print_error('backup', f'{deleted[entry]["title"]}, {deleted[entry]["uploader"]}, {entry}')
                     print_error('backup', '------------------------------')
 
                 if not added and not deleted:
@@ -988,6 +1015,8 @@ def main():
             classical_work_combobox.grid(row=13, column=width // 6, columnspan=4, sticky='EW')
             classical_comment_label.grid(row=14, column=0, columnspan=width // 6, sticky='W', pady=2)
             classical_comment_combobox.grid(row=14, column=width // 6, columnspan=4, sticky='EW')
+            classical_cut_label.grid(row=15, column=0, columnspan=width // 6, sticky='W', pady=2)
+            classical_cut_entry.grid(row=15, column=width // 6, columnspan=4, sticky='EW')
 
     # track changes of some comboboxes to update other comboboxes
     def combobox_write(*args):
@@ -1028,10 +1057,18 @@ def main():
     # change current working directory to script location
     os.chdir(os.path.dirname(os.path.realpath(__file__)))
 
+    def size_changed(event):
+        try:
+            error_text['height'] = (root.winfo_height() - download_frame.winfo_height() - metadata_frame.winfo_height()
+                                    - 80) // 16
+        except NameError:
+            pass
+
     root = Tk()
     root.title('YouTube to MP3 Converter')
     root.geometry('800x720')
     root.option_add('*tearOff', FALSE)
+    root.bind('<Configure>', size_changed)
 
     download_frame = ttk.Labelframe(root, padding=(3, 10, 12, 12), borderwidth=5, relief='ridge', text='Download')
     metadata_frame = ttk.Labelframe(root, padding=(3, 10, 12, 12), borderwidth=5, relief='ridge', text='Metadata')
@@ -1153,11 +1190,14 @@ def main():
     classical_work_combobox = ttk.Combobox(metadata_frame, textvariable=classical_work_combobox_content)
     classical_comment_label = ttk.Label(metadata_frame, text='Comments:')
     classical_comment_combobox = ttk.Combobox(metadata_frame, textvariable=classical_comment_combobox_content)
+    classical_cut_label = ttk.Label(metadata_frame, text='Cut:')
+    classical_cut_entry = ttk.Entry(metadata_frame)
 
     metadata_widgets = [album_label, album_combobox, track_label, track_combobox, keep_artist_checkbutton,
                         classical_type_label, classical_type_combobox, classical_number_label,
                         classical_number_combobox, classical_key_label, classical_key_combobox, classical_work_label,
-                        classical_work_combobox, classical_comment_label, classical_comment_combobox]
+                        classical_work_combobox, classical_comment_label, classical_comment_combobox,
+                        classical_cut_label, classical_cut_entry]
 
     # error message widgets
     error_text = ScrolledText(error_frame, wrap=tkinter.WORD, height=10, state='disabled')
@@ -1210,7 +1250,6 @@ def main():
             f.columnconfigure(i, weight=1)
 
     root.mainloop()
-
 
 if __name__ == '__main__':
     main()
