@@ -6,6 +6,7 @@ import subprocess
 import tkinter
 import webbrowser
 from datetime import datetime
+from pprint import pprint
 from tkinter import *
 from tkinter import ttk, filedialog, messagebox
 from tkinter.scrolledtext import ScrolledText
@@ -17,6 +18,15 @@ from mutagen.id3 import ID3, TIT2, TPE1, TPUB, TALB, TRCK, TCON
 
 
 def main():
+    def print_error(process: str, msg):
+        msg = f"[{datetime.now().strftime('%H:%M:%S')}] [{process}] {msg}"
+        error_text['state'] = 'normal'
+        error_text.insert('end', msg + '\n')
+        error_text.see('end')
+        error_text['state'] = 'disabled'
+        print(msg)
+        Tk.update(root)
+
     class Globals:
         folder: str = ''  # folder to sync with
         files: list[dict[str, Any]] = []
@@ -29,27 +39,34 @@ def main():
         dont_delete: list[str] = []
         start = datetime.now()
         metadata_file: dict[str, dict[str, str]] = {}
+        try:
+            with open('metadata.json', 'r') as f:
+                metadata_file = json.load(f)
+        except Exception as e:
+            print_error('json', e)
 
         classical_work_format_opus: list[str] = ['Barber', 'Beethoven', 'Brahms', 'Chopin', 'Dvořák', 'Grieg',
                                                  'Faure', 'Berlioz', 'Mendelssohn', 'Paganini', 'Prokofiev',
                                                  'Rachmaninoff', 'Rimsky-Korsakov', 'Saint-Saëns', 'Clementi',
-                                                 'Schubert', 'Schumann', 'Scriabin', 'Shostakovich', 'Sibelius',
+                                                 'Schumann', 'Scriabin', 'Shostakovich', 'Sibelius',
                                                  'Eduard Strauss I', 'Johann Strauss I', 'Johann Strauss II',
                                                  'Johann Strauss III', 'Josef Strauss', 'Richard Strauss',
-                                                 'Tchaikovsky']
+                                                 'Tchaikovsky', 'Elgar']
         classical_work_format_special: dict[str, str] = {
-            'Bach': 'BWV.',
+            'Bach': 'BWV',
+            'Händel': 'HWV',
             'Haydn': 'Hob.',
             'Purcell': 'Z.',
             'Mozart': 'K.',
-            'Scarlatti': 'K.'
+            'Scarlatti': 'K.',
+            'Schubert': 'D.'
         }
         classical_work_formats: list[str] = list(dict.fromkeys(['Op.'] + [f for f in
                                                                           classical_work_format_special.values()]))
         classical_composers: list[str] = classical_work_format_opus + \
                                          [item for item in classical_work_format_special.keys()] + \
                                          ['Debussy', 'Tarrega', 'Franz von Suppè', 'Bizet', 'Gershwin', 'Verdi',
-                                          'Holst', 'Händel', 'Offenbach', 'Khachaturian', 'Delibes', 'Liszt', 'Ravel',
+                                          'Holst', 'Offenbach', 'Khachaturian', 'Delibes', 'Liszt', 'Ravel',
                                           'Rossini', 'Satie', 'Vivaldi', 'Wagner']
         # Consistent names for composers that are spelled in different ways
         classical_composers_real: dict[str, str] = {
@@ -102,15 +119,6 @@ def main():
     # convert number of seconds to string with format minutes:seconds
     def sec_to_min(sec: int) -> str:
         return f"{sec // 60}:{'0' if (sec % 60) < 10 else ''}{sec % 60}"
-
-    def print_error(process: str, msg):
-        msg = f"[{datetime.now().strftime('%H:%M:%S')}] [{process}] {msg}"
-        error_text['state'] = 'normal'
-        error_text.insert('end', msg + '\n')
-        error_text.see('end')
-        error_text['state'] = 'disabled'
-        print(msg)
-        Tk.update(root)
 
     class Logger(object):
         def debug(self, msg):
@@ -165,9 +173,13 @@ def main():
 
         def remove_brackets(text: str) -> str:
             while '(' in text and ')' in text:
-                text = text.split('(', 1)[0].strip() + ' ' + text.split(')', 1)[1].strip()
+                split: list[str] = text.split('(', 1)
+                text = split[0].strip() + ' ' + \
+                       (split[1].split(')', 1)[1].strip() if ')' in split[1] else split[1].strip())
             while '[' in text and ']' in text:
-                text = text.split('[', 1)[0].strip() + ' ' + text.split(']', 1)[1].strip()
+                split: list[str] = text.split('[', 1)
+                text = split[0].strip() + ' ' + \
+                       (split[1].split(']', 1)[1].strip() if ']' in split[1] else split[1].strip())
             for c in ['(', ')', '[', ']']:
                 text = text.replace(c, '')
             return text.strip()
@@ -189,7 +201,7 @@ def main():
 
         title: str = metadata['title']
 
-        for sep in [' - ', ' – ', ' — ', '-', '|', ':', '~', '‐', '_']:
+        for sep in [' - ', ' – ', ' — ', '-', '|', ':', '~', '‐', '_', '∙']:
             if sep in title:
                 split: list[str] = title.split(sep)
                 for i in range(len(split)):
@@ -227,7 +239,7 @@ def main():
 
         # Classical mode
         def lower_and_remove_symbols(text: str) -> str:
-            for s in ['.', ',', '(', ')', '/', '#', '[', ']']:
+            for s in ['.', ',', '(', ')', '/', '#', '[', ']', ':']:
                 text = text.replace(s, ' ')
             return text.lower().strip()
 
@@ -236,7 +248,7 @@ def main():
         number_choices: list[str] = []
         key_choices: list[str] = []
         work_choices: list[str] = []
-        comment_choices: list[str] = ([title.split('"')[1]] if title.count('"') >= 2 else []) +\
+        comment_choices: list[str] = ([title.split('"')[1]] if title.count('"') >= 2 else []) + \
                                      [i.split(')')[0] for i in title.split('(') if ')' in i] if '(' in title else []
         if metadata_mode.get() == 'classical':
             # look for known composer in title, but spelled differently
@@ -246,6 +258,8 @@ def main():
             for c in Globals.classical_composers:
                 if c.lower() in title.lower() and c not in composer_choices:
                     composer_choices.append(c)
+            for c in artist_choices:
+                composer_choices.append(c)
 
             # type choices
             for c in Globals.classical_types_real:
@@ -254,12 +268,14 @@ def main():
             for c in Globals.classical_types:
                 if c.lower() in title.lower() and c not in type_choices:
                     type_choices.append(c)
+            for c in title_choices:
+                type_choices.append(c)
 
             # number choices
             split: list[str] = lower_and_remove_symbols(title).split()
             for i in range(len(split)):
-                if split[i].isnumeric() and split[i-1] not in [f.lower().replace('.', '') for f in
-                                                               Globals.classical_work_formats]:
+                if split[i].isnumeric() and split[i - 1] not in [f.lower().replace('.', '') for f in
+                                                                 Globals.classical_work_formats]:
                     number_choices.append(split[i])
 
             # key choices
@@ -272,9 +288,9 @@ def main():
                 elif 'minor' in text or 'moll' in text:
                     key = key.lower()
 
-                if 'sharp' in text or text[1] == '#':
+                if 'sharp' in text or len(text) > 1 and text[1] == '#':
                     key += 's'
-                elif 'flat' in text or text[1] == 'b' or text[1] == '♭':
+                elif 'flat' in text or len(text) > 1 and (text[1] == 'b' or text[1] == '♭'):
                     key += 'b'
 
                 key_choices.append(key)
@@ -284,9 +300,9 @@ def main():
             for w in [' ' + f.lower().replace('.', '') + ' ' for f in Globals.classical_work_formats]:
                 if w in title_lower:
                     words: list[str] = title_lower.split(w)[-1].split()
-                    work: str = words[0]
+                    work: str = words[0].upper() if words[0].isalpha() else words[0]
                     if len(words) > 2 and words[1] == 'no':
-                        work += ' ' + words[2]
+                        work += ' ' + (words[2].upper() if words[2].isalpha() else words[2])
                     work_choices.append(work)
 
         if 'playlist' in metadata and metadata['playlist']:
@@ -392,22 +408,19 @@ def main():
 
             # Classical mode
             if metadata_mode.get() == 'classical':
-                if file['type']:
-                    classical_type_combobox['values'] = file['type']
-                    classical_type_combobox.set(file['type'][0])
-                if file['number']:
-                    classical_number_combobox['values'] = file['number']
-                    classical_number_combobox.set(file['number'][0])
-                if file['key']:
-                    classical_key_combobox['values'] = file['key']
-                    classical_key_combobox.set(file['key'][0])
-                if file['work']:
-                    classical_work_combobox['values'] = file['work']
-                    classical_work_combobox.set(file['work'][0])
-                if file['comment']:
-                    classical_comment_combobox['values'] = file['comment']
+                classical_type_combobox['values'] = file['type']
+                classical_type_combobox.set(file['type'][0] if file['type'] else '')
+                classical_number_combobox['values'] = file['number']
+                classical_number_combobox.set(file['number'][0] if file['number'] else '')
+                classical_key_combobox['values'] = file['key']
+                classical_key_combobox.set(file['key'][0] if file['key'] else '')
+                classical_work_combobox['values'] = file['work']
+                classical_work_combobox.set(file['work'][0] if file['work'] else '')
+
+                classical_comment_combobox['values'] = file['comment']
+                classical_comment_combobox.set('')
                 classical_cut_entry.delete(0, 'end')
-                if 'cut' in Globals.metadata_file[file['id']]:
+                if file['id'] in Globals.metadata_file and 'cut' in Globals.metadata_file[file['id']]:
                     classical_cut_entry.insert(0, Globals.metadata_file[file['id']]['cut'])
         else:
             reset()
@@ -421,14 +434,50 @@ def main():
             # create file with cut information
             try:
                 with open('cut.info', 'w') as f:
+                    # format example: 3+5 1:30+4-1:40 2:30+5
+                    # cut out from 0:00 to 0:05, 1:30 to 1:40 and 2:30 to end of file, add 3 seconds of silence to the
+                    # beginning, 4 seconds after the cut from 1:30 to 1:40 and 5 seconds to the end
+
+                    highest: int = 0
                     for cut in data['cut'].split('-'):
-                        f.write(f"file '{path}'\n")
-                        f.write(f'inpoint {cut.split()[0]}\n')
-                        f.write(f'outpoint {cut.split()[1]}\n')
+                        split_space: list[str] = cut.split(' ')  # a) ['3+5', '1:30+4'] b) ['1:40', '2:30+5']
+
+                        if '+' in split_space[0]:  # true for a), false for b)
+                            split_plus: list[str] = split_space[0].split('+')  # ['3', '5']
+                            if int(split_plus[0]) > highest:
+                                highest = int(split_plus[0])
+                            f.write("file 's.mp3'\n")
+                            f.write(f'outpoint {split_plus[0]}\n')  # outpoint 3
+
+                            f.write(f"file '{path}'\n")
+                            if split_plus[1]:
+                                f.write(f'inpoint {split_plus[1]}\n')  # inpoint 5
+                        else:
+                            f.write(f"file '{path}'\n")
+                            if split_space[0]:
+                                f.write(f'inpoint {split_space[0]}\n')  # inpoint 1:40
+
+                        if len(split_space) == 2 and split_space[1]:
+                            if '+' in split_space[1]:
+                                split_plus: list[str] = split_space[1].split('+')  # a) ['1:30', '4'] b) ['2:30', '5']
+                                if split_plus[0]:
+                                    f.write(f'outpoint {split_plus[0]}\n')
+
+                                if int(split_plus[1]) > highest:
+                                    highest = int(split_plus[1])
+                                f.write("file 's.mp3'\n")
+                                f.write(f'outpoint {split_plus[1]}\n')
+                            else:
+                                f.write(f'outpoint {split_space[1]}\n')
+
+                if highest > 0:
+                    subprocess.run(f'ffmpeg.exe -filter_complex anullsrc=sample_rate=48000 -t {highest} s.mp3')
 
                 # run ffmpeg to cut the file
                 subprocess.run(f'ffmpeg.exe -f concat -safe 0 -i cut.info -c copy "{filename}"')
                 os.remove(path)
+                if highest > 0:
+                    os.remove('s.mp3')
                 path = filename
             except Exception as e:
                 print_error('cut', e)
@@ -535,7 +584,7 @@ def main():
         file['album'] = album_combobox.get()
         file['track'] = track_combobox.get()
         if metadata_mode.get() == 'classical' and classical_cut_entry.get().strip():
-            file['cut'] = classical_cut_entry.get().strip()
+            file['cut'] = classical_cut_entry.get()
         apply_metadata(file['id'], file)
         update_combobox(False)
 
@@ -557,8 +606,8 @@ def main():
         reset()
 
     def apply_metadata_file():
-        if metadata_file_variable.get() == '1' and Globals.current_file and\
-                                                   Globals.current_file['id'] in Globals.metadata_file:
+        if metadata_file_variable.get() == '1' and Globals.current_file and \
+                Globals.current_file['id'] in Globals.metadata_file:
             id = Globals.current_file['id']
             data = Globals.metadata_file[id]
             apply_metadata(id, data)
@@ -585,24 +634,16 @@ def main():
 
         # add IDs of already finished files to a list if sync is enabled
         Globals.already_finished = {}
-        folder = Globals.folder if download_mode.get() == 'sync' else ''
-        if folder:
-            for f in os.listdir(folder):
-                if f.split('.')[-1] == 'mp3':
-                    try:
-                        id3 = ID3(os.path.join(folder, f))
-                        video_id = id3.getall('TPUB')[0].text[0]
-                        if video_id:
-                            Globals.already_finished[video_id] = f
-                    except IndexError:
-                        print(f'{f} has no TPUB-Frame set')
-
-        # load metadata from file
-        try:
-            with open('metadata.json', 'r') as f:
-                Globals.metadata_file = json.load(f)
-        except Exception as e:
-            print_error('json', e)
+        folder = Globals.folder if Globals.folder else 'out'
+        for f in os.listdir(folder):
+            if f.split('.')[-1] == 'mp3':
+                try:
+                    id3 = ID3(os.path.join(folder, f))
+                    video_id = id3.getall('TPUB')[0].text[0]
+                    if video_id:
+                        Globals.already_finished[video_id] = f
+                except IndexError:
+                    print(f'{f} has no TPUB-Frame set')
 
         # prevent windows sleep mode
         ctypes.windll.kernel32.SetThreadExecutionState(0x80000001)
@@ -642,8 +683,8 @@ def main():
                 results = ''
 
                 for entry in info['entries']:
-                    if 'id' in entry and entry['id']:
-                        if not os.path.isfile(os.path.join('out', entry['id'] + '.mp3')) and\
+                    if entry and 'id' in entry and entry['id']:
+                        if not os.path.isfile(os.path.join('out', entry['id'] + '.mp3')) and \
                                 not entry['id'] in Globals.already_finished:
                             results += str(entry["playlist_index"]) + ','
 
@@ -744,7 +785,7 @@ def main():
             except OSError as e:
                 print_error('OS', e)
             except Exception as e:
-                print_error('Error', e)
+                print_error('download_metadata', e)
 
         elif mode == 'length':
             def convert_time(sec):
@@ -853,21 +894,30 @@ def main():
 
                 time = sec_to_min((datetime.now() - Globals.start).seconds)
                 progress = ((video_info['playlist_index'] - 1) / length
-                            + ((download_info['downloaded_bytes'] / download_info[
-                            'total_bytes'] / length) if download_info else 0)) * 100
+                            + ((download_info['downloaded_bytes'] / download_info['total_bytes'] / length)
+                               if download_info else 0)) * 100
 
-                progress_content = (f"Downloading playlist \"{video_info['playlist']}\"" +
-                                    (f", {video_info['playlist_index']}/{length} ({round(progress, 1)}% finished, " if progress <= 100 else ' (') +
-                                    f"{time} elapsed)")
+                progress_content = (
+                        f"Downloading playlist \"{video_info['playlist']}\"" +
+                        (f", {video_info['playlist_index']}/{length} ({round(progress, 1)}% finished, "
+                         if progress <= 100 else ' (') +
+                        f"{time} elapsed)"
+                )
 
-                video_content = (f"Current video: {title}" +
-                                 (f", {download_info['downloaded_bytes'] * 100 // download_info['total_bytes']}% finished, {sec_to_min(download_info['eta'])} left" if download_info else ''))
+                video_content = (
+                        f"Current video: {title}" +
+                        (f", {download_info['downloaded_bytes'] * 100 // download_info['total_bytes']}% "
+                         f"finished, {sec_to_min(download_info['eta'])} left" if download_info else '')
+                )
 
             else:  # video download
-                progress = (download_info['downloaded_bytes'] / download_info[
-                    'total_bytes'] * 100) if download_info else 0
-                progress_content = (f"Downloading: {title}" +
-                                    (f", {round(progress)}% finished, {sec_to_min(download_info['eta'])} left" if download_info else ''))
+                progress = (download_info['downloaded_bytes'] / download_info['total_bytes'] * 100) \
+                    if download_info else 0
+                progress_content = (
+                        f"Downloading: {title}" +
+                        (f", {round(progress)}% finished, {sec_to_min(download_info['eta'])} left"
+                         if download_info else '')
+                )
                 video_content = ''
 
             progress_bar.set(progress)
@@ -1041,11 +1091,10 @@ def main():
             if work:
                 formats: dict[str, str] = Globals.classical_work_format_special
                 work_numbers: list[str] = work.split(' ')
-                real_work = ((formats[artist] + ' ') if artist in formats else 'Op. ') + work_numbers[0] + ((' No. ' +
-                                                                                                             work_numbers[
-                                                                                                                 1]) if len(
-                    work_numbers) > 1 else '') + ((': ' + ' '.join(work_numbers[2:])) if
-                                                  len(work_numbers) > 2 else '')
+                real_work = ((formats[artist] + ' ') if artist in formats else 'Op. ') + work_numbers[0] + \
+                            (((' No. ' if artist != 'Haydn' else ':') + work_numbers[1]) if len(work_numbers) > 1
+                                                                                    and work_numbers[1] else '') + \
+                            ((': ' + ' '.join(work_numbers[2:])) if len(work_numbers) > 2 else '')
 
             title_combobox.set("{0}{1}{2}{3}{4}".format(type,
                                                         ((' No. ' + number) if number else ''),
@@ -1064,11 +1113,16 @@ def main():
         except NameError:
             pass
 
+    def on_exit():
+        reset()
+        root.destroy()
+
     root = Tk()
     root.title('YouTube to MP3 Converter')
     root.geometry('800x720')
     root.option_add('*tearOff', FALSE)
     root.bind('<Configure>', size_changed)
+    root.protocol("WM_DELETE_WINDOW", on_exit)
 
     download_frame = ttk.Labelframe(root, padding=(3, 10, 12, 12), borderwidth=5, relief='ridge', text='Download')
     metadata_frame = ttk.Labelframe(root, padding=(3, 10, 12, 12), borderwidth=5, relief='ridge', text='Metadata')
@@ -1166,8 +1220,8 @@ def main():
                                           state='disabled')
     capitalize_title_button = ttk.Button(metadata_frame, text='Normal capitalization', command=capitalize_title,
                                          state='disabled')
-    metadata_auto_button = ttk.Button(metadata_frame, text='Apply metadata automatically', command=apply_metadata_auto,
-                                      state='disabled')
+    metadata_auto_button = ttk.Button(metadata_frame, text='Apply all metadata automatically',
+                                      command=apply_metadata_auto, state='disabled')
     metadata_button = ttk.Button(metadata_frame, text='Apply metadata', command=apply_metadata_once, state='disabled')
     metadata_file_checkbutton = ttk.Checkbutton(metadata_frame, text='Apply metadata from metadata.json automatically',
                                                 variable=metadata_file_variable, command=apply_metadata_file)
@@ -1250,6 +1304,7 @@ def main():
             f.columnconfigure(i, weight=1)
 
     root.mainloop()
+
 
 if __name__ == '__main__':
     main()
