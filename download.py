@@ -11,10 +11,12 @@ from tkinter import *
 from tkinter import ttk, filedialog, messagebox
 from tkinter.scrolledtext import ScrolledText
 from typing import Any
+from pydub import AudioSegment
 
 import youtube_dl
 from mutagen import MutagenError
 from mutagen.id3 import ID3, TIT2, TPE1, TPUB, TALB, TRCK, TCON
+from send2trash import send2trash
 
 
 def main():
@@ -46,7 +48,7 @@ def main():
             print_error('json', e)
 
         classical_work_format_opus: list[str] = ['Barber', 'Beethoven', 'Brahms', 'Chopin', 'Dvořák', 'Grieg',
-                                                 'Faure', 'Berlioz', 'Mendelssohn', 'Paganini', 'Prokofiev',
+                                                 'Fauré', 'Berlioz', 'Mendelssohn', 'Paganini', 'Prokofiev',
                                                  'Rachmaninoff', 'Rimsky-Korsakov', 'Saint-Saëns', 'Clementi',
                                                  'Schumann', 'Scriabin', 'Shostakovich', 'Sibelius',
                                                  'Eduard Strauss I', 'Johann Strauss I', 'Johann Strauss II',
@@ -82,7 +84,8 @@ def main():
             'Strauss Jr.': 'Johann Strauss II',
             'Strauss III': 'Johann Strauss III',
             'Eduard Strauss': 'Eduard Strauss I',
-            'Tschaikowsky': 'Tchaikovsky'
+            'Tschaikowsky': 'Tchaikovsky',
+            'Faure': 'Fauré'
         }
 
         classical_types: list[str] = ['Sonata', 'Sonatina', 'Suite', 'Minuet', 'Prelude', 'Fugue', 'Toccata',
@@ -164,7 +167,9 @@ def main():
         track_choices: list[str] = []
 
         # add data from metadata.json as first choice
+        choices['file'] = False
         if metadata['id'] in Globals.metadata_file:
+            choices['file'] = True
             file_data: dict[str, str] = Globals.metadata_file[metadata['id']]
             artist_choices.append(file_data['artist'])
             title_choices.append(file_data['title'])
@@ -422,6 +427,9 @@ def main():
                 classical_cut_entry.delete(0, 'end')
                 if file['id'] in Globals.metadata_file and 'cut' in Globals.metadata_file[file['id']]:
                     classical_cut_entry.insert(0, Globals.metadata_file[file['id']]['cut'])
+
+                if file['file']:
+                    title_combobox.set(file['title'][0])
         else:
             reset()
 
@@ -471,11 +479,12 @@ def main():
                                 f.write(f'outpoint {split_space[1]}\n')
 
                 if highest > 0:
-                    subprocess.run(f'ffmpeg.exe -filter_complex anullsrc=sample_rate=48000 -t {highest} s.mp3')
+                    subprocess.run(f'ffmpeg.exe -filter_complex'
+                                   f' anullsrc=sample_rate={AudioSegment.from_mp3(path).frame_rate} -t {highest} s.mp3')
 
                 # run ffmpeg to cut the file
                 subprocess.run(f'ffmpeg.exe -f concat -safe 0 -i cut.info -c copy "{filename}"')
-                os.remove(path)
+                send2trash(path)
                 if highest > 0:
                     os.remove('s.mp3')
                 path = filename
@@ -510,7 +519,7 @@ def main():
         Globals.metadata_file[id] = {key: data[key] for key in ['artist', 'title', 'album', 'track']}
         if 'cut' in data:
             Globals.metadata_file[id]['cut'] = data['cut']
-            os.remove('cut.info')
+            send2trash('cut.info')
 
     def reset():
         # save metadata to file
@@ -535,7 +544,6 @@ def main():
         Globals.current_file = {}
         Globals.already_finished = {}
         Globals.dont_delete = []
-        Globals.metadata_file = {}
 
         url_entry.state(['!disabled'])
         url_entry.delete(0, 'end')
