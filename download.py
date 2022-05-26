@@ -45,7 +45,7 @@ def main():
             with open('metadata.json', 'r') as f:
                 metadata_file = json.load(f)
         except Exception as e:
-            print_error('json', e)
+            print('[json]', e)
 
         classical_work_format_opus: list[str] = ['Barber', 'Beethoven', 'Brahms', 'Chopin', 'Dvořák', 'Grieg',
                                                  'Fauré', 'Berlioz', 'Mendelssohn', 'Paganini', 'Prokofiev',
@@ -357,7 +357,12 @@ def main():
             if 'playlist_index' in file and 'playlist_length' in file:
                 video_text += f" ({file['playlist_index']}/{file['playlist_length']})"
             select_metadata_variable.set(video_text)
-
+            
+            # save previous artist and album before they get changed
+            if metadata_mode.get() == 'vgm' or metadata_mode.get() == 'album':
+                previous_artist = artist_combobox.get()
+                previous_album = album_combobox.get()
+            
             if swap_variable.get() == '0':
                 artist_combobox['values'] = file['artist']
                 title_combobox['values'] = file['title']
@@ -370,9 +375,6 @@ def main():
                 title_combobox.set(file['artist'][0])
 
             if metadata_mode.get() == 'vgm' or metadata_mode.get() == 'album':
-                previous_artist = artist_combobox.get()
-                previous_album = album_combobox.get()
-
                 # Album mode
                 if metadata_mode.get() == 'album':
                     if file['album']:
@@ -382,35 +384,25 @@ def main():
                         track_combobox.set(file['track'][0])
                     track_combobox['values'] = file['track']
 
-                    if previous_artist:
-                        if keep_artist_variable.get() == '1':
-                            artist_combobox.set(previous_artist)
-                        artist_combobox['values'] += (previous_artist,)
-
-                    if previous_album:
-                        if keep_artist_variable.get() == '1':
-                            album_combobox.set(previous_album)
-                        album_combobox['values'] += (previous_album,)
-
                 # VGM mode
                 if metadata_mode.get() == 'vgm':
-
                     album_combobox.set(artist_combobox.get() + ' OST')
                     album_combobox['values'] = [i + ' OST' for i in artist_combobox['values']]
 
-                    if previous_artist:
-                        if keep_artist_variable.get() == '1':
-                            artist_combobox.set(previous_artist)
-                        artist_combobox['values'] += (previous_artist,)
-
-                    if previous_album:
-                        if keep_artist_variable.get() == '1':
-                            album_combobox.set(previous_album)
-                        album_combobox['values'] += (previous_album,)
-
                     track_combobox.set('')
                     track_combobox['values'] = []
+                
+                # apply previous artist and album
+                if previous_artist:
+                    if keep_artist_variable.get() == '1':
+                        artist_combobox.set(previous_artist)
+                    artist_combobox['values'] += (previous_artist,)
 
+                if previous_album:
+                    if keep_artist_variable.get() == '1':
+                        album_combobox.set(previous_album)
+                    album_combobox['values'] += (previous_album,)
+            
             # Classical mode
             if metadata_mode.get() == 'classical':
                 classical_type_combobox['values'] = file['type']
