@@ -41,6 +41,10 @@ def main():
         dont_delete: list[str] = []
         start = datetime.now()
         metadata_file: dict[str, dict[str, str]] = {}
+
+        # change current working directory to script location
+        os.chdir(os.path.dirname(os.path.realpath(__file__)))
+
         try:
             with open('metadata.json', 'r') as f:
                 metadata_file = json.load(f)
@@ -1102,9 +1106,6 @@ def main():
                                                         ((', ' + real_work) if real_work else ''),
                                                         (' (' + comment + ')' if comment else '')
                                                         ))
-
-    # change current working directory to script location
-    os.chdir(os.path.dirname(os.path.realpath(__file__)))
 
     def size_changed(event):
         try:
