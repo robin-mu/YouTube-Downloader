@@ -41,7 +41,7 @@ def main():
         dont_delete: list[str] = []
         start = datetime.now()
         metadata_file: dict[str, dict[str, str]] = {}
-        saved_urls: dict[str, str] = {}
+        saved_urls: dict[str, dict[str, str]] = {}
 
         # change current working directory to script location
         os.chdir(os.path.dirname(os.path.realpath(__file__)))
@@ -550,6 +550,7 @@ def main():
 
         url_combobox.state(['!disabled'])
         url_combobox.delete(0, 'end')
+        save_url_button.state(['!disabled'])
         download_button.state(['!disabled'])
         output_folder_button.state(['!disabled'])
         output_folder_variable.set('Folder: Default (click to open)')
@@ -642,6 +643,7 @@ def main():
         download_button.state(['disabled'])
         output_folder_button.state(['disabled'])
         url_combobox.state(['disabled'])
+        save_url_button.state(['disabled'])
 
         # add IDs of already finished files to a list if sync is enabled
         Globals.already_finished = {}
@@ -675,7 +677,7 @@ def main():
         }
 
         ydl = youtube_dl.YoutubeDL(ydl_opts)
-        info = ydl.extract_info(Globals.saved_urls[url] if url in Globals.saved_urls else url)
+        info = ydl.extract_info(Globals.saved_urls[url]['url'] if url in Globals.saved_urls else url)
 
         # reset if info is empty
         if not info:
@@ -683,6 +685,7 @@ def main():
             output_folder_button.state(['!disabled'])
             url_combobox.state(['!disabled'])
             url_combobox.delete(0, 'end')
+            save_url_button.state(['!disabled'])
             progress_text.set('')
             ctypes.windll.kernel32.SetThreadExecutionState(0x80000000)
             return
@@ -710,7 +713,7 @@ def main():
                             f'{(len(not_downloaded) + 1) // 2} videos have not been downloaded. Trying again...')
                 ydl_opts['playlist_items'] = not_downloaded
                 ydl = youtube_dl.YoutubeDL(ydl_opts)
-                ydl.download([url_combobox.get()])
+                ydl.download([Globals.saved_urls[url] if url in Globals.saved_urls else url])
 
             not_downloaded = get_not_downloaded(info)
 
@@ -779,6 +782,7 @@ def main():
         # prevent windows sleep mode
         ctypes.windll.kernel32.SetThreadExecutionState(0x80000001)
 
+        url = url_combobox.get()
         ydl_opts = {
             'ignoreerrors': True,
             'logger': Logger(),
@@ -786,7 +790,7 @@ def main():
         }
 
         ydl = youtube_dl.YoutubeDL(ydl_opts)
-        info = ydl.extract_info(url_combobox.get(), download=False)  # ie_key='Youtube' could be faster
+        info = ydl.extract_info(Globals.saved_urls[url] if url in Globals.saved_urls else url, download=False)  # ie_key='Youtube' could be faster
 
         # mode dependent actions
         mode = download_mode.get()
@@ -983,9 +987,9 @@ def main():
 
     # button click methods
     def save_url():
-        url = simpledialog.askstring(title='Save URL', prompt='Input the name to use for the URL:')
+        url = simpledialog.askstring(title='Save URL', prompt='Input the name under which to save the URL and settings:')
         if url:
-            Globals.saved_urls[url] = url_combobox.get()
+            Globals.saved_urls[url] = {'url': url_combobox.get(), 'folder': Globals.folder, 'metadata_mode': metadata_mode.get()}
         url_combobox['values'] = list(Globals.saved_urls.keys())
 
     def select_output_folder():
@@ -1087,6 +1091,14 @@ def main():
             classical_cut_entry.grid(row=15, column=width // 6, columnspan=4, sticky='EW')
 
     # track changes of some comboboxes to update other comboboxes
+    def url_combobox_write(*args):
+        if url_combobox.get() in Globals.saved_urls:
+            url = url_combobox.get()
+            Globals.folder = Globals.saved_urls[url]['folder']
+            output_folder_variable.set('Folder: ' + (Globals.folder if Globals.folder else 'Default') + ' (click to open)')
+
+            metadata_mode.set(Globals.saved_urls[url]['metadata_mode'])
+
     def combobox_write(*args):
         if metadata_mode.get() == 'vgm':
             artist: str = artist_combobox.get()
@@ -1152,6 +1164,7 @@ def main():
     debug.set('0')
 
     # widget variables
+    url_variable = StringVar()
     artist_variable = StringVar()
     artist_variable.set('Select the artist:')
     output_folder_variable = StringVar()
@@ -1211,7 +1224,7 @@ def main():
     # widgets
     # download widgets
     url_label = ttk.Label(download_frame, text='Input video/playlist URL, search query or saved URL name:')
-    url_combobox = ttk.Combobox(download_frame, values=list(Globals.saved_urls.keys()))
+    url_combobox = ttk.Combobox(download_frame, values=list(Globals.saved_urls.keys()), textvariable=url_variable)
     save_url_button = ttk.Button(download_frame, text='Save...', command=save_url)
     output_folder_label = ttk.Label(download_frame, textvariable=output_folder_variable)
     output_folder_button = ttk.Button(download_frame, text='Select output folder...', command=select_output_folder)
@@ -1273,6 +1286,7 @@ def main():
     error_text = ScrolledText(error_frame, wrap=tkinter.WORD, height=10, state='disabled')
 
     # widget events
+    url_variable.trace_add('write', url_combobox_write)
     output_folder_label.bind('<Button-1>', open_output_folder)
     select_metadata_label.bind('<Button-1>', open_url)
     artist_combobox_content.trace_add('write', combobox_write)
