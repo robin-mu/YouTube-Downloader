@@ -8,7 +8,7 @@ import webbrowser
 from datetime import datetime
 from pprint import pprint
 from tkinter import *
-from tkinter import ttk, filedialog, messagebox
+from tkinter import ttk, filedialog, messagebox, simpledialog
 from tkinter.scrolledtext import ScrolledText
 from typing import Any
 from pydub import AudioSegment
@@ -41,6 +41,7 @@ def main():
         dont_delete: list[str] = []
         start = datetime.now()
         metadata_file: dict[str, dict[str, str]] = {}
+        saved_urls: dict[str, str] = {}
 
         # change current working directory to script location
         os.chdir(os.path.dirname(os.path.realpath(__file__)))
@@ -48,6 +49,8 @@ def main():
         try:
             with open('metadata.json', 'r') as f:
                 metadata_file = json.load(f)
+            with open('saved_urls.json', 'r') as f:
+                saved_urls = json.load(f)
         except Exception as e:
             print('[json]', e)
 
@@ -522,6 +525,10 @@ def main():
         with open('metadata.json', 'w') as f:
             json.dump(Globals.metadata_file, f)
 
+        # save saved urls to file
+        with open('saved_urls.json', 'w') as f:
+            json.dump(Globals.saved_urls, f)
+
         # move files to output folder if one has been specified
         if Globals.folder:
             for f in os.listdir('out'):
@@ -541,8 +548,8 @@ def main():
         Globals.already_finished = {}
         Globals.dont_delete = []
 
-        url_entry.state(['!disabled'])
-        url_entry.delete(0, 'end')
+        url_combobox.state(['!disabled'])
+        url_combobox.delete(0, 'end')
         download_button.state(['!disabled'])
         output_folder_button.state(['!disabled'])
         output_folder_variable.set('Folder: Default (click to open)')
@@ -627,14 +634,14 @@ def main():
             pass
 
         # don't download if the url entry is empty
-        if not url_entry.get():
+        if not url_combobox.get():
             return
 
         Globals.start = datetime.now()
 
         download_button.state(['disabled'])
         output_folder_button.state(['disabled'])
-        url_entry.state(['disabled'])
+        url_combobox.state(['disabled'])
 
         # add IDs of already finished files to a list if sync is enabled
         Globals.already_finished = {}
@@ -652,6 +659,7 @@ def main():
         # prevent windows sleep mode
         ctypes.windll.kernel32.SetThreadExecutionState(0x80000001)
 
+        url = url_combobox.get()
         ydl_opts = {
             'format': 'bestaudio/best',
             'outtmpl': 'out/%(id)s.%(ext)s',
@@ -667,14 +675,14 @@ def main():
         }
 
         ydl = youtube_dl.YoutubeDL(ydl_opts)
-        info = ydl.extract_info(url_entry.get())  # ie_key='Youtube' could be faster
+        info = ydl.extract_info(Globals.saved_urls[url] if url in Globals.saved_urls else url)
 
         # reset if info is empty
         if not info:
             download_button.state(['!disabled'])
             output_folder_button.state(['!disabled'])
-            url_entry.state(['!disabled'])
-            url_entry.delete(0, 'end')
+            url_combobox.state(['!disabled'])
+            url_combobox.delete(0, 'end')
             progress_text.set('')
             ctypes.windll.kernel32.SetThreadExecutionState(0x80000000)
             return
@@ -702,7 +710,7 @@ def main():
                             f'{(len(not_downloaded) + 1) // 2} videos have not been downloaded. Trying again...')
                 ydl_opts['playlist_items'] = not_downloaded
                 ydl = youtube_dl.YoutubeDL(ydl_opts)
-                ydl.download([url_entry.get()])
+                ydl.download([url_combobox.get()])
 
             not_downloaded = get_not_downloaded(info)
 
@@ -718,8 +726,8 @@ def main():
             f"Downloaded {len(Globals.files)} video{'s' if len(Globals.files) != 1 else ''} in {time // 60}:{'0' if (time % 60) < 10 else ''}{time % 60}")
         video.set('')
 
-        # delete all files from the destination folder that are not in the dont_delete list (which means they were removed from the playlist)
-        if Globals.already_finished and Globals.folder:
+        # delete all files from the destination folder that are not in the dont_delete list (which means they were removed from the playlist) (only in sync mode)
+        if Globals.already_finished and Globals.folder and download_mode.get() == 'sync':
             for f in Globals.already_finished.values():
                 if f not in Globals.dont_delete:
                     try:
@@ -740,14 +748,14 @@ def main():
         if not Globals.files:
             download_button.state(['!disabled'])
             output_folder_button.state(['!disabled'])
-            url_entry.state(['!disabled'])
-            url_entry.delete(0, 'end')
+            url_combobox.state(['!disabled'])
+            url_combobox.delete(0, 'end')
             progress_text.set('')
             return
 
         update_combobox(True)
 
-        # don't enable metdata selection if everything has been set already
+        # don't enable metadata selection if everything has been set already
         if Globals.current_file:
             swap_checkbutton.state(['!disabled'])
             capitalize_artist_button.state(['!disabled'])
@@ -757,8 +765,8 @@ def main():
         else:
             download_button.state(['!disabled'])
             output_folder_button.state(['!disabled'])
-            url_entry.state(['!disabled'])
-            url_entry.delete(0, 'end')
+            url_combobox.state(['!disabled'])
+            url_combobox.delete(0, 'end')
             progress_text.set('')
 
     # download modes that download metadata (Calculate length, Download metadata, Backup playlist)
@@ -766,7 +774,7 @@ def main():
         debug.set('1')
 
         download_button.state(['disabled'])
-        url_entry.state(['disabled'])
+        url_combobox.state(['disabled'])
 
         # prevent windows sleep mode
         ctypes.windll.kernel32.SetThreadExecutionState(0x80000001)
@@ -778,7 +786,7 @@ def main():
         }
 
         ydl = youtube_dl.YoutubeDL(ydl_opts)
-        info = ydl.extract_info(url_entry.get(), download=False)  # ie_key='Youtube' could be faster
+        info = ydl.extract_info(url_combobox.get(), download=False)  # ie_key='Youtube' could be faster
 
         # mode dependent actions
         mode = download_mode.get()
@@ -878,8 +886,8 @@ def main():
                 print_error('backup', f'New playlist data has been backed up to {f.name}')
 
         download_button.state(['!disabled'])
-        url_entry.state(['!disabled'])
-        url_entry.delete(0, 'end')
+        url_combobox.state(['!disabled'])
+        url_combobox.delete(0, 'end')
 
         # reactivate windows sleep mode
         ctypes.windll.kernel32.SetThreadExecutionState(0x80000000)
@@ -974,6 +982,12 @@ def main():
             return f"{info_dict['id']}: File already present"
 
     # button click methods
+    def save_url():
+        url = simpledialog.askstring(title='Save URL', prompt='Input the name to use for the URL:')
+        if url:
+            Globals.saved_urls[url] = url_combobox.get()
+        url_combobox['values'] = list(Globals.saved_urls.keys())
+
     def select_output_folder():
         Globals.folder = filedialog.askdirectory()
         output_folder_variable.set('Folder: ' + (Globals.folder if Globals.folder else 'Default') + ' (click to open)')
@@ -1196,10 +1210,11 @@ def main():
 
     # widgets
     # download widgets
-    url_label = ttk.Label(download_frame, text='Input video/playlist URL or search query here:')
-    url_entry = ttk.Entry(download_frame)
+    url_label = ttk.Label(download_frame, text='Input video/playlist URL, search query or saved URL name:')
+    url_combobox = ttk.Combobox(download_frame, values=list(Globals.saved_urls.keys()))
+    save_url_button = ttk.Button(download_frame, text='Save...', command=save_url)
     output_folder_label = ttk.Label(download_frame, textvariable=output_folder_variable)
-    output_folder_button = ttk.Button(download_frame, text='Select output folder', command=select_output_folder)
+    output_folder_button = ttk.Button(download_frame, text='Select output folder...', command=select_output_folder)
     download_button = ttk.Button(download_frame, text='Download', command=download)
     sync_ask_delete_checkbutton = ttk.Checkbutton(download_frame, text='Ask before deleting files',
                                                   variable=sync_ask_delete)
@@ -1272,7 +1287,8 @@ def main():
 
     download_frame.grid(row=0, column=0, sticky='NEW', padx=5, pady=5)
     url_label.grid(row=0, column=0, columnspan=width // 6, sticky='W')
-    url_entry.grid(row=0, column=width // 6, columnspan=5, sticky='EW')
+    url_combobox.grid(row=0, column=width // 6, columnspan=4, sticky='EW')
+    save_url_button.grid(row=0, column=width - width // 6, columnspan=width // 6, padx=(5, 0), sticky='W')
     output_folder_button.grid(row=1, column=0, pady=(5, 0), sticky='W')
     output_folder_label.grid(row=1, column=width // 6, columnspan=width - width // 6, sticky='W')
     download_button.grid(row=20, column=width // 6, pady=(5, 0), sticky='W')
@@ -1296,7 +1312,7 @@ def main():
     error_frame.grid(row=2, column=0, sticky='NEW', padx=5, pady=5)
     error_text.grid(row=0, column=0, columnspan=width, sticky='EW', pady=(5, 0))
 
-    url_entry.focus()
+    url_combobox.focus()
 
     root.columnconfigure(0, weight=1)
 
