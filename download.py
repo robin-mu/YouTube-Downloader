@@ -18,8 +18,143 @@ from mutagen import MutagenError
 from mutagen.id3 import ID3, TIT2, TPE1, TPUB, TALB, TRCK, TCON
 from send2trash import send2trash
 
+# change current working directory to script location
+os.chdir(os.path.dirname(os.path.realpath(__file__)))
+
+
+class Globals:
+    folder: str = ''  # folder to sync with
+    files: list[dict[str, Any]] = []
+    current_file: dict[str, Any] = {}
+    # dict of IDs and filenames of videos that are already present in the output folder and where metadata has been
+    # set
+    already_finished: dict[str, str] = {}
+    # list of filenames that are already downloaded but still in the playlist, so they shouldn't be deleted when
+    # syncing
+    dont_delete: list[str] = []
+    start = datetime.now()
+    metadata_file: dict[str, dict[str, str]] = {}
+    saved_urls: dict[str, dict[str, str]] = {}
+
+    try:
+        with open('metadata.json', 'r') as f:
+            metadata_file = json.load(f)
+        with open('saved_urls.json', 'r') as f:
+            saved_urls = json.load(f)
+    except Exception as e:
+        print('[json]', e)
+
+    classical_work_format_opus: list[str] = ['Barber', 'Beethoven', 'Brahms', 'Chopin', 'Dvořák', 'Grieg',
+                                             'Fauré', 'Berlioz', 'Mendelssohn', 'Paganini', 'Prokofiev',
+                                             'Rachmaninoff', 'Rimsky-Korsakov', 'Saint-Saëns', 'Clementi',
+                                             'Schumann', 'Scriabin', 'Shostakovich', 'Sibelius',
+                                             'Eduard Strauss I', 'Johann Strauss I', 'Johann Strauss II',
+                                             'Johann Strauss III', 'Josef Strauss', 'Richard Strauss',
+                                             'Tchaikovsky', 'Elgar']
+    classical_work_format_special: dict[str, str] = {
+        'Bach': 'BWV',
+        'Händel': 'HWV',
+        'Haydn': 'Hob.',
+        'Purcell': 'Z.',
+        'Mozart': 'K.',
+        'Scarlatti': 'K.',
+        'Schubert': 'D.'
+    }
+    classical_work_formats: list[str] = list(dict.fromkeys(['Op.'] + [f for f in
+                                                                      classical_work_format_special.values()]))
+    classical_composers: list[str] = classical_work_format_opus + \
+                                     [item for item in classical_work_format_special.keys()] + \
+                                     ['Debussy', 'Tarrega', 'Franz von Suppè', 'Bizet', 'Gershwin', 'Verdi',
+                                      'Holst', 'Offenbach', 'Khachaturian', 'Delibes', 'Liszt', 'Ravel',
+                                      'Rossini', 'Satie', 'Vivaldi', 'Wagner']
+    # Consistent names for composers that are spelled in different ways
+    classical_composers_real: dict[str, str] = {
+        'Dvorak': 'Dvořák',
+        'Suppe': 'Franz von Suppè',
+        'Suppé': 'Franz von Suppè',
+        'Handel': 'Händel',
+        'Haendel': 'Händel',
+        'Rachmaninov': 'Rachmaninoff',
+        'Schostakowitsch': 'Shostakovich',
+        'Strauss I': 'Johann Strauss I',
+        'Strauss II': 'Johann Strauss II',
+        'Strauss Jr.': 'Johann Strauss II',
+        'Strauss III': 'Johann Strauss III',
+        'Eduard Strauss': 'Eduard Strauss I',
+        'Tschaikowsky': 'Tchaikovsky',
+        'Faure': 'Fauré'
+    }
+
+    classical_types: list[str] = ['Sonata', 'Sonatina', 'Suite', 'Minuet', 'Prelude', 'Fugue', 'Toccata',
+                                  'Concerto', 'Symphony', 'Trio', 'Dance', 'Waltz', 'Ballade', 'Etude', 'Impromptu',
+                                  'Mazurka', 'Nocturne', 'Polonaise', 'Rondo', 'Scherzo', 'Serenade', 'March',
+                                  'Polka', 'Rhapsody', 'Quintet', 'Variations', 'Canon', 'Caprice',
+                                  'Moment Musicaux', 'Gymnopédie', 'Gnossienne', 'Ballet']
+    classical_types_real: dict[str, str] = {
+        'Sonate': 'Sonata',
+        'Sonatine': 'Sonatina',
+        'Menuett': 'Minuet',
+        'Präludium': 'Prelude',
+        'Fuge': 'Fugue',
+        'Konzert': 'Concerto',
+        'Sinfonie': 'Symphony',
+        'Tanz': 'Dance',
+        'Walzer': 'Waltz',
+        'Etüde': 'Etude',
+        'Marsch': 'March',
+        'Rhapsodie': 'Rhapsody',
+        'Quintett': 'Quintet',
+        'Variationen': 'Variations',
+        'Moment Musical': 'Moment Musicaux',
+        'Gymnopedie': 'Gymnopédie',
+        'Ballett': 'Ballet'
+    }
+
+
+# remove characters that are not allowed in filenames (by windows)
+def safe_filename(filename: str) -> str:
+    for c in ['\\', '/', ':', '?', '"', '*', '<', '>', '|']:
+        filename = filename.replace(c, '')
+    return filename
+
+
+# convert number of seconds to string with format minutes:seconds
+def sec_to_min(sec: int) -> str:
+    return f"{sec // 60}:{'0' if (sec % 60) < 10 else ''}{sec % 60}"
+
 
 def main():
+    class Logger(object):
+        def debug(self, msg):
+            time = f"[{datetime.now().strftime('%H:%M:%S')}] "
+            msg = msg.replace('\r', '')
+
+            error_text['state'] = 'normal'
+            if '[download]  ' in msg or '[download] 100.0%' in msg:
+                if debug.get() == '1':
+                    error_text.delete('end-1l', 'end')
+                    error_text.insert('end', '\n' + f'{time}{msg}')
+                print(f"\r{time}{msg}", end='', flush=True)
+            elif '[download] 100%' in msg:
+                if debug.get() == '1':
+                    error_text.delete('end-1l', 'end')
+                    error_text.insert('end', '\n' + f'{time}{msg}' + '\n')
+                print(f"\r{time}{msg}")
+            else:
+                if debug.get() == '1':
+                    error_text.insert('end', f'{time}{msg}' + '\n')
+                print(f'{time}{msg}')
+            error_text.see('end')
+            error_text['state'] = 'disabled'
+
+            Tk.update(root)
+
+        def warning(self, msg):
+            print_error('warning', msg)
+
+        def error(self, msg):
+            print_error('error', msg)
+
     def print_error(process: str, msg):
         msg = f"[{datetime.now().strftime('%H:%M:%S')}] [{process}] {msg}"
         error_text['state'] = 'normal'
@@ -28,142 +163,6 @@ def main():
         error_text['state'] = 'disabled'
         print(msg)
         Tk.update(root)
-
-    class Globals:
-        folder: str = ''  # folder to sync with
-        files: list[dict[str, Any]] = []
-        current_file: dict[str, Any] = {}
-        # dict of IDs and filenames of videos that are already present in the output folder and where metadata has been
-        # set
-        already_finished: dict[str, str] = {}
-        # list of filenames that are already downloaded but still in the playlist, so they shouldn't be deleted when
-        # syncing
-        dont_delete: list[str] = []
-        start = datetime.now()
-        metadata_file: dict[str, dict[str, str]] = {}
-        saved_urls: dict[str, dict[str, str]] = {}
-
-        # change current working directory to script location
-        os.chdir(os.path.dirname(os.path.realpath(__file__)))
-
-        try:
-            with open('metadata.json', 'r') as f:
-                metadata_file = json.load(f)
-            with open('saved_urls.json', 'r') as f:
-                saved_urls = json.load(f)
-        except Exception as e:
-            print('[json]', e)
-
-        classical_work_format_opus: list[str] = ['Barber', 'Beethoven', 'Brahms', 'Chopin', 'Dvořák', 'Grieg',
-                                                 'Fauré', 'Berlioz', 'Mendelssohn', 'Paganini', 'Prokofiev',
-                                                 'Rachmaninoff', 'Rimsky-Korsakov', 'Saint-Saëns', 'Clementi',
-                                                 'Schumann', 'Scriabin', 'Shostakovich', 'Sibelius',
-                                                 'Eduard Strauss I', 'Johann Strauss I', 'Johann Strauss II',
-                                                 'Johann Strauss III', 'Josef Strauss', 'Richard Strauss',
-                                                 'Tchaikovsky', 'Elgar']
-        classical_work_format_special: dict[str, str] = {
-            'Bach': 'BWV',
-            'Händel': 'HWV',
-            'Haydn': 'Hob.',
-            'Purcell': 'Z.',
-            'Mozart': 'K.',
-            'Scarlatti': 'K.',
-            'Schubert': 'D.'
-        }
-        classical_work_formats: list[str] = list(dict.fromkeys(['Op.'] + [f for f in
-                                                                          classical_work_format_special.values()]))
-        classical_composers: list[str] = classical_work_format_opus + \
-                                         [item for item in classical_work_format_special.keys()] + \
-                                         ['Debussy', 'Tarrega', 'Franz von Suppè', 'Bizet', 'Gershwin', 'Verdi',
-                                          'Holst', 'Offenbach', 'Khachaturian', 'Delibes', 'Liszt', 'Ravel',
-                                          'Rossini', 'Satie', 'Vivaldi', 'Wagner']
-        # Consistent names for composers that are spelled in different ways
-        classical_composers_real: dict[str, str] = {
-            'Dvorak': 'Dvořák',
-            'Suppe': 'Franz von Suppè',
-            'Suppé': 'Franz von Suppè',
-            'Handel': 'Händel',
-            'Haendel': 'Händel',
-            'Rachmaninov': 'Rachmaninoff',
-            'Schostakowitsch': 'Shostakovich',
-            'Strauss I': 'Johann Strauss I',
-            'Strauss II': 'Johann Strauss II',
-            'Strauss Jr.': 'Johann Strauss II',
-            'Strauss III': 'Johann Strauss III',
-            'Eduard Strauss': 'Eduard Strauss I',
-            'Tschaikowsky': 'Tchaikovsky',
-            'Faure': 'Fauré'
-        }
-
-        classical_types: list[str] = ['Sonata', 'Sonatina', 'Suite', 'Minuet', 'Prelude', 'Fugue', 'Toccata',
-                                      'Concerto', 'Symphony', 'Trio', 'Dance', 'Waltz', 'Ballade', 'Etude', 'Impromptu',
-                                      'Mazurka', 'Nocturne', 'Polonaise', 'Rondo', 'Scherzo', 'Serenade', 'March',
-                                      'Polka', 'Rhapsody', 'Quintet', 'Variations', 'Canon', 'Caprice',
-                                      'Moment Musicaux', 'Gymnopédie', 'Gnossienne', 'Ballet']
-        classical_types_real: dict[str, str] = {
-            'Sonate': 'Sonata',
-            'Sonatine': 'Sonatina',
-            'Menuett': 'Minuet',
-            'Präludium': 'Prelude',
-            'Fuge': 'Fugue',
-            'Konzert': 'Concerto',
-            'Sinfonie': 'Symphony',
-            'Tanz': 'Dance',
-            'Walzer': 'Waltz',
-            'Etüde': 'Etude',
-            'Marsch': 'March',
-            'Rhapsodie': 'Rhapsody',
-            'Quintett': 'Quintet',
-            'Variationen': 'Variations',
-            'Moment Musical': 'Moment Musicaux',
-            'Gymnopedie': 'Gymnopédie',
-            'Ballett': 'Ballet'
-        }
-
-    # remove characters that are not allowed in filenames (by windows)
-    def safe_filename(filename: str) -> str:
-        for c in ['\\', '/', ':', '?', '"', '*', '<', '>', '|']:
-            filename = filename.replace(c, '')
-        return filename
-
-    # convert number of seconds to string with format minutes:seconds
-    def sec_to_min(sec: int) -> str:
-        return f"{sec // 60}:{'0' if (sec % 60) < 10 else ''}{sec % 60}"
-
-    class Logger(object):
-        def debug(self, msg):
-            time = f"[{datetime.now().strftime('%H:%M:%S')}] "
-            msg = msg.replace('\r', '')
-            if '[download]  ' in msg or '[download] 100.0%' in msg:
-                if debug.get() == '1':
-                    error_text['state'] = 'normal'
-                    error_text.delete('end-1l', 'end')
-                    error_text.insert('end', '\n' + f'{time}{msg}')
-                    error_text.see('end')
-                    error_text['state'] = 'disabled'
-                print(f"\r{time}{msg}", end='', flush=True)
-            elif '[download] 100%' in msg:
-                if debug.get() == '1':
-                    error_text['state'] = 'normal'
-                    error_text.delete('end-1l', 'end')
-                    error_text.insert('end', '\n' + f'{time}{msg}' + '\n')
-                    error_text.see('end')
-                    error_text['state'] = 'disabled'
-                print(f"\r{time}{msg}")
-            else:
-                if debug.get() == '1':
-                    error_text['state'] = 'normal'
-                    error_text.insert('end', f'{time}{msg}' + '\n')
-                    error_text.see('end')
-                    error_text['state'] = 'disabled'
-                print(f'{time}{msg}')
-            Tk.update(root)
-
-        def warning(self, msg):
-            print_error('warning', msg)
-
-        def error(self, msg):
-            print_error('error', msg)
 
     def generate_metadata_choices(metadata: dict[str, Any]) -> dict[str, Any]:
         choices = {'id': metadata['id'], 'originaltitle': metadata['title']}
@@ -196,6 +195,7 @@ def main():
                 text = text.replace(c, '')
             return text.strip()
 
+        # get title and artist set by YouTube Music
         if 'track' in metadata:
             track: str = metadata['track'] if metadata['track'] else ''
             # make only the first letter of each word upper-case if the title is upper-case
@@ -211,6 +211,7 @@ def main():
             artist_choices.append(remove_brackets(artist))
             artist_choices.append(artist)
 
+        # get title and artist from video title and channel name
         title: str = metadata['title']
 
         for sep in [' - ', ' – ', ' — ', '-', '|', ':', '~', '‐', '_', '∙']:
@@ -328,8 +329,8 @@ def main():
 
         # remove empty and duplicate list entries
         choices['title'] = list(dict.fromkeys(filter(None, title_choices)))
-        choices['artist'] = list(dict.fromkeys(filter(None, composer_choices if metadata_mode.get() == 'classical' else
-                            artist_choices)))
+        choices['artist'] = list(
+            dict.fromkeys(filter(None, composer_choices if metadata_mode.get() == 'classical' else artist_choices)))
         choices['album'] = list(dict.fromkeys(album_choices))
         choices['track'] = list(dict.fromkeys(track_choices))
         choices['type'] = list(dict.fromkeys(type_choices))
@@ -347,7 +348,8 @@ def main():
         else:
             index = Globals.files.index(Globals.current_file) + 1
 
-        # check if ID at current index is in the loaded metadata and the checkbutton is checked
+        # If 'Apply metadata from json' checkbutton is checked: check if ID at current index is in the loaded metadata
+        # and apply it
         while index < len(Globals.files) and Globals.files[index]['id'] in Globals.metadata_file and \
                 metadata_file_variable.get() == '1':
             id = Globals.files[index]['id']
@@ -364,12 +366,12 @@ def main():
             if 'playlist_index' in file and 'playlist_length' in file:
                 video_text += f" ({file['playlist_index']}/{file['playlist_length']})"
             select_metadata_variable.set(video_text)
-            
+
             # save previous artist and album before they get changed
             if metadata_mode.get() == 'vgm' or metadata_mode.get() == 'album':
                 previous_artist = artist_combobox.get()
                 previous_album = album_combobox.get()
-            
+
             if swap_variable.get() == '0':
                 artist_combobox['values'] = file['artist']
                 title_combobox['values'] = file['title']
@@ -398,7 +400,7 @@ def main():
 
                     track_combobox.set('')
                     track_combobox['values'] = []
-                
+
                 # apply previous artist and album
                 if previous_artist:
                     if keep_artist_variable.get() == '1':
@@ -409,7 +411,7 @@ def main():
                     if keep_artist_variable.get() == '1':
                         album_combobox.set(previous_album)
                     album_combobox['values'] += (previous_album,)
-            
+
             # Classical mode
             if metadata_mode.get() == 'classical':
                 classical_type_combobox['values'] = file['type']
@@ -542,88 +544,34 @@ def main():
                 except OSError as e:
                     print_error('OS', e)
 
+        # reset globals
         Globals.folder = ''
         Globals.files = []
         Globals.current_file = {}
         Globals.already_finished = {}
         Globals.dont_delete = []
 
-        url_combobox.state(['!disabled'])
-        url_combobox.delete(0, 'end')
-        save_url_button.state(['!disabled'])
-        download_button.state(['!disabled'])
-        output_folder_button.state(['!disabled'])
-        output_folder_variable.set('Folder: Default (click to open)')
-        artist_combobox.set('')
-        title_combobox.set('')
-        artist_combobox['values'] = []
-        title_combobox['values'] = []
+        # reset comboboxes
+        for c in [artist_combobox, title_combobox, album_combobox, track_combobox, classical_type_combobox,
+                  classical_number_combobox, classical_key_combobox, classical_work_combobox,
+                  classical_comment_combobox]:
+            c.set('')
+            c['values'] = []
+
+        # reset widgets
+        disable_widgets(metadata_widgets)
+        enable_widgets(download_widgets)
+        url_combobox.set('')
         progress_text.set('')
         video.set('')
         select_metadata_variable.set('')
-        swap_checkbutton.state(['disabled'])
-        capitalize_artist_button.state(['disabled'])
-        capitalize_title_button.state(['disabled'])
-        metadata_auto_button.state(['disabled'])
-        metadata_button.state(['disabled'])
+        output_folder_variable.set('Folder: Default (click to open)')
 
         # VGM mode
-        if metadata_mode.get() == 'vgm' or metadata_mode.get() == 'album':
-            album_combobox.set('')
-            album_combobox['values'] = []
-            track_combobox.set('')
-            track_combobox['values'] = []
-            keep_artist_variable.set('0')
+        keep_artist_variable.set('0')
 
         # Classical mode
-        if metadata_mode.get() == 'classical':
-            classical_type_combobox.set('')
-            classical_type_combobox['values'] = []
-            classical_number_combobox.set('')
-            classical_number_combobox['values'] = []
-            classical_key_combobox.set('')
-            classical_key_combobox['values'] = []
-            classical_work_combobox.set('')
-            classical_work_combobox['values'] = []
-            classical_comment_combobox.set('')
-            classical_comment_combobox['values'] = []
-            classical_cut_entry.delete(0, 'end')
-
-    def apply_metadata_once():
-        file = Globals.current_file
-        file['artist'] = artist_combobox.get()
-        file['title'] = title_combobox.get()
-        file['album'] = album_combobox.get()
-        file['track'] = track_combobox.get()
-        if metadata_mode.get() == 'classical' and classical_cut_entry.get().strip():
-            file['cut'] = classical_cut_entry.get()
-        apply_metadata(file['id'], file)
-        update_combobox(False)
-
-    def apply_metadata_auto():
-        previous_artist = artist_combobox.get()
-        previous_album = album_combobox.get()
-
-        for f in Globals.files:
-            f['artist'] = f['artist'][0] if keep_artist_variable.get() == '0' else previous_artist
-            f['title'] = f['title'][0]
-            if metadata_mode.get() == 'vgm':
-                f['album'] = f['artist'] + ' OST' if keep_artist_variable.get() == '0' else previous_album
-            elif keep_artist_variable.get() == '1':
-                f['album'] = previous_album
-            else:
-                f['album'] = f['album'][0] if f['album'] else ''
-            f['track'] = f['track'][0] if f['track'] else ''
-            apply_metadata(f['id'], f)
-        reset()
-
-    def apply_metadata_file():
-        if metadata_file_variable.get() == '1' and Globals.current_file and \
-                Globals.current_file['id'] in Globals.metadata_file:
-            id = Globals.current_file['id']
-            data = Globals.metadata_file[id]
-            apply_metadata(id, data)
-            update_combobox(False)
+        classical_cut_entry.delete(0, 'end')
 
     # download mode dependent methods
     # download modes that download files (Download, Sync)
@@ -640,12 +588,10 @@ def main():
 
         Globals.start = datetime.now()
 
-        download_button.state(['disabled'])
-        output_folder_button.state(['disabled'])
-        url_combobox.state(['disabled'])
-        save_url_button.state(['disabled'])
+        # disable download widgets
+        disable_widgets(download_widgets)
 
-        # add IDs of already finished files to a list if sync is enabled
+        # add IDs of already finished files to a list
         Globals.already_finished = {}
         folder = Globals.folder if Globals.folder else 'out'
         for f in os.listdir(folder):
@@ -668,7 +614,7 @@ def main():
             'postprocessors': [{
                 'key': 'FFmpegExtractAudio',
                 'preferredcodec': 'mp3'
-            }],
+                }],
             'ignoreerrors': True,
             'progress_hooks': [hook],
             'match_filter': get_info_dict,
@@ -681,12 +627,7 @@ def main():
 
         # reset if info is empty
         if not info:
-            download_button.state(['!disabled'])
-            output_folder_button.state(['!disabled'])
-            url_combobox.state(['!disabled'])
-            url_combobox.delete(0, 'end')
-            save_url_button.state(['!disabled'])
-            progress_text.set('')
+            reset()
             ctypes.windll.kernel32.SetThreadExecutionState(0x80000000)
             return
 
@@ -694,7 +635,7 @@ def main():
 
         # check which videos haven't been downloaded when downloading a playlist
         if info['webpage_url_basename'] == 'playlist':
-            def get_not_downloaded(info):
+            def get_not_downloaded(info) -> str:
                 results = ''
 
                 for entry in info['entries']:
@@ -720,16 +661,18 @@ def main():
             # print IDs of all videos that still couldn't be downloaded
             if not_downloaded:
                 print_error('download',
-                            f'{(len(not_downloaded) + 1) // 2} videos could not be downloaded. Their indexes are: {not_downloaded}')
+                            f'{(len(not_downloaded) + 1) // 2} videos could not be downloaded. '
+                            f'Their indexes are: {not_downloaded}')
 
         progress_bar.set(0)
 
         time = (datetime.now() - Globals.start).seconds
-        progress_text.set(
-            f"Downloaded {len(Globals.files)} video{'s' if len(Globals.files) != 1 else ''} in {time // 60}:{'0' if (time % 60) < 10 else ''}{time % 60}")
+        progress_text.set(f"Downloaded {len(Globals.files)} video{'s' if len(Globals.files) != 1 else ''} in "
+                          f"{sec_to_min(time)}")
         video.set('')
 
-        # delete all files from the destination folder that are not in the dont_delete list (which means they were removed from the playlist) (only in sync mode)
+        # delete all files from the destination folder that are not in the dont_delete list
+        # (which means they were removed from the playlist) (only in sync mode)
         if Globals.already_finished and Globals.folder and download_mode.get() == 'sync':
             for f in Globals.already_finished.values():
                 if f not in Globals.dont_delete:
@@ -738,7 +681,8 @@ def main():
                             os.remove(os.path.join(Globals.folder, f))
                             print_error('sync', f'Deleting {f}')
                         elif messagebox.askyesno(title='Delete file?', icon='question',
-                                                 message=f'The video connected to "{f}" is not in the playlist anymore. Do you want to delete the file?'):
+                                                 message=f'The video connected to "{f}" is not in the playlist '
+                                                         f'anymore. Do you want to delete the file?'):
                             os.remove(os.path.join(Globals.folder, f))
                             print_error('sync', f'Deleting {f}')
                     except OSError as e:
@@ -747,37 +691,23 @@ def main():
         # reactivate windows sleep mode
         ctypes.windll.kernel32.SetThreadExecutionState(0x80000000)
 
-        # don't start setting metadata if the files list is empty
+        # reset if the files list is empty (no metadata to be set)
         if not Globals.files:
-            download_button.state(['!disabled'])
-            output_folder_button.state(['!disabled'])
-            url_combobox.state(['!disabled'])
-            url_combobox.delete(0, 'end')
-            progress_text.set('')
+            reset()
             return
 
         update_combobox(True)
 
-        # don't enable metadata selection if everything has been set already
+        # start metadata selection if not all metadata has been already set (reset in update_combobox hasn't been
+        # executed yet)
         if Globals.current_file:
-            swap_checkbutton.state(['!disabled'])
-            capitalize_artist_button.state(['!disabled'])
-            capitalize_title_button.state(['!disabled'])
-            metadata_auto_button.state(['!disabled'])
-            metadata_button.state(['!disabled'])
-        else:
-            download_button.state(['!disabled'])
-            output_folder_button.state(['!disabled'])
-            url_combobox.state(['!disabled'])
-            url_combobox.delete(0, 'end')
-            progress_text.set('')
+            enable_widgets(metadata_widgets)
 
     # download modes that download metadata (Calculate length, Download metadata, Backup playlist)
     def download_metadata():
         debug.set('1')
 
-        download_button.state(['disabled'])
-        url_combobox.state(['disabled'])
+        disable_widgets(download_widgets)
 
         # prevent windows sleep mode
         ctypes.windll.kernel32.SetThreadExecutionState(0x80000001)
@@ -790,7 +720,8 @@ def main():
         }
 
         ydl = youtube_dl.YoutubeDL(ydl_opts)
-        info = ydl.extract_info(Globals.saved_urls[url] if url in Globals.saved_urls else url, download=False)  # ie_key='Youtube' could be faster
+        info = ydl.extract_info(Globals.saved_urls[url] if url in Globals.saved_urls else url,
+                                download=False)  # ie_key='Youtube' could be faster
 
         # mode dependent actions
         mode = download_mode.get()
@@ -889,23 +820,22 @@ def main():
                 json.dump(new_file, f)
                 print_error('backup', f'New playlist data has been backed up to {f.name}')
 
-        download_button.state(['!disabled'])
-        url_combobox.state(['!disabled'])
-        url_combobox.delete(0, 'end')
+        reset()
 
         # reactivate windows sleep mode
         ctypes.windll.kernel32.SetThreadExecutionState(0x80000000)
 
     # methods for getting information about videos/playlists from youtube_dl while downloading to update the GUI
     # video downloading,    call from hook:          originaltitle, downloaded_bytes, total_bytes, eta
-    # video downloading,    call from get_info_dict: title, playlist(None), playlist_index(None)
+    # video downloading,    call from get_info_dict: title, playlist (None), playlist_index (None)
     # playlist downloading, call from hook:          originaltitle, playlist, playlist_index, playlist_length, downloaded_bytes, total_bytes, eta
     # playlist downloading, call from get_info_dict: title, playlist, playlist_index, n_entries
     def update_progress(video_info, download_info):
         try:
             title = video_info['originaltitle'] if 'originaltitle' in video_info else video_info['title']
 
-            if 'playlist' in video_info and video_info['playlist']:  # playlist download
+            # playlist download
+            if 'playlist' in video_info and video_info['playlist']:
                 length = video_info['n_entries'] if 'n_entries' in video_info else video_info['playlist_length']
 
                 time = sec_to_min((datetime.now() - Globals.start).seconds)
@@ -926,7 +856,8 @@ def main():
                          f"finished, {sec_to_min(download_info['eta'])} left" if download_info else '')
                 )
 
-            else:  # video download
+            # video download
+            else:
                 progress = (download_info['downloaded_bytes'] / download_info['total_bytes'] * 100) \
                     if download_info else 0
                 progress_content = (
@@ -985,11 +916,58 @@ def main():
             update_progress(info_dict, [])
             return f"{info_dict['id']}: File already present"
 
+    # GUI methods
+    def enable_widgets(widgets: list) -> None:
+        for w in widgets:
+            w.state(['!disabled'])
+
+    def disable_widgets(widgets: list) -> None:
+        for w in widgets:
+            w.state(['disabled'])
+
     # button click methods
+    def apply_metadata_once():
+        file = Globals.current_file
+        file['artist'] = artist_combobox.get()
+        file['title'] = title_combobox.get()
+        file['album'] = album_combobox.get()
+        file['track'] = track_combobox.get()
+        if metadata_mode.get() == 'classical' and classical_cut_entry.get().strip():
+            file['cut'] = classical_cut_entry.get()
+        apply_metadata(file['id'], file)
+        update_combobox(False)
+
+    def apply_metadata_auto():
+        previous_artist = artist_combobox.get()
+        previous_album = album_combobox.get()
+
+        for f in Globals.files:
+            f['artist'] = f['artist'][0] if keep_artist_variable.get() == '0' else previous_artist
+            f['title'] = f['title'][0]
+            if metadata_mode.get() == 'vgm':
+                f['album'] = f['artist'] + ' OST' if keep_artist_variable.get() == '0' else previous_album
+            elif keep_artist_variable.get() == '1':
+                f['album'] = previous_album
+            else:
+                f['album'] = f['album'][0] if f['album'] else ''
+            f['track'] = f['track'][0] if f['track'] else ''
+            apply_metadata(f['id'], f)
+        reset()
+
+    def apply_metadata_file():
+        if metadata_file_variable.get() == '1' and Globals.current_file and \
+                Globals.current_file['id'] in Globals.metadata_file:
+            id = Globals.current_file['id']
+            data = Globals.metadata_file[id]
+            apply_metadata(id, data)
+            update_combobox(False)
+
     def save_url():
-        url = simpledialog.askstring(title='Save URL', prompt='Input the name under which to save the URL and settings:')
+        url = simpledialog.askstring(title='Save URL',
+                                     prompt='Input the name under which to save the URL and settings:')
         if url:
-            Globals.saved_urls[url] = {'url': url_combobox.get(), 'folder': Globals.folder, 'metadata_mode': metadata_mode.get()}
+            Globals.saved_urls[url] = {'url': url_combobox.get(), 'folder': Globals.folder,
+                                       'metadata_mode': metadata_mode.get()}
         url_combobox['values'] = list(Globals.saved_urls.keys())
 
     def select_output_folder():
@@ -1024,7 +1002,7 @@ def main():
 
     # menu click methods
     def update_download_mode():
-        for w in download_widgets:
+        for w in download_mode_widgets:
             w.grid_forget()
 
         mode = download_mode.get()
@@ -1051,7 +1029,7 @@ def main():
             download_button['command'] = download_metadata
 
     def update_metadata_mode():
-        for w in metadata_widgets:
+        for w in metadata_mode_widgets:
             w.grid_forget()
 
         mode: str = metadata_mode.get()
@@ -1074,6 +1052,7 @@ def main():
                 elif mode == 'vgm':
                     album_combobox.set(artist_combobox.get() + ' OST')
                     album_combobox['values'] = [i + ' OST' for i in artist_combobox['values']]
+
         elif mode == 'classical':
             artist_variable.set('Select the composer:')
 
@@ -1090,12 +1069,14 @@ def main():
             classical_cut_label.grid(row=15, column=0, columnspan=width // 6, sticky='W', pady=2)
             classical_cut_entry.grid(row=15, column=width // 6, columnspan=4, sticky='EW')
 
-    # track changes of some comboboxes to update other comboboxes
+    # event methods
+    # track changes of comboboxes to update other comboboxes
     def url_combobox_write(*args):
         if url_combobox.get() in Globals.saved_urls:
             url = url_combobox.get()
             Globals.folder = Globals.saved_urls[url]['folder']
-            output_folder_variable.set('Folder: ' + (Globals.folder if Globals.folder else 'Default') + ' (click to open)')
+            output_folder_variable.set(
+                'Folder: ' + (Globals.folder if Globals.folder else 'Default') + ' (click to open)')
 
             metadata_mode.set(Globals.saved_urls[url]['metadata_mode'])
 
@@ -1122,8 +1103,8 @@ def main():
                 formats: dict[str, str] = Globals.classical_work_format_special
                 work_numbers: list[str] = work.split(' ')
                 real_work = ((formats[artist] + ' ') if artist in formats else 'Op. ') + work_numbers[0] + \
-                            (((' No. ' if artist != 'Haydn' else ':') + work_numbers[1]) if len(work_numbers) > 1
-                                                                                    and work_numbers[1] else '') + \
+                            (((' No. ' if artist != 'Haydn' else ':') + work_numbers[1])
+                                if len(work_numbers) > 1 and work_numbers[1] else '') + \
                             ((': ' + ' '.join(work_numbers[2:])) if len(work_numbers) > 2 else '')
 
             title_combobox.set("{0}{1}{2}{3}{4}".format(type,
@@ -1133,6 +1114,7 @@ def main():
                                                         (' (' + comment + ')' if comment else '')
                                                         ))
 
+    # track change of window size
     def size_changed(event):
         try:
             error_text['height'] = (root.winfo_height() - download_frame.winfo_height() - metadata_frame.winfo_height()
@@ -1140,6 +1122,7 @@ def main():
         except NameError:
             pass
 
+    # track exit of program
     def on_exit():
         reset()
         root.destroy()
@@ -1235,8 +1218,11 @@ def main():
     download_progress = ttk.Progressbar(download_frame, orient=HORIZONTAL, mode='determinate', variable=progress_bar)
     video_label = ttk.Label(download_frame, text='', textvariable=video)
 
+    # download widgets that get enabled/disabled
+    download_widgets = [url_combobox, save_url_button, output_folder_button, download_button]
+
     # download mode dependent widgets
-    download_widgets = [sync_ask_delete_checkbutton]
+    download_mode_widgets = [sync_ask_delete_checkbutton]
 
     # metadata widgets
     select_metadata_label = ttk.Label(metadata_frame, text='', textvariable=select_metadata_variable, cursor='hand2')
@@ -1254,6 +1240,10 @@ def main():
     metadata_button = ttk.Button(metadata_frame, text='Apply metadata', command=apply_metadata_once, state='disabled')
     metadata_file_checkbutton = ttk.Checkbutton(metadata_frame, text='Apply metadata from metadata.json automatically',
                                                 variable=metadata_file_variable, command=apply_metadata_file)
+
+    # metadata widgets that get enabled/disabled
+    metadata_widgets = [capitalize_artist_button, capitalize_title_button, metadata_auto_button, metadata_button]
+
     # metadata mode dependent widgets
     # vgm / album mode
     album_label = ttk.Label(metadata_frame, text='Select the album:')
@@ -1276,11 +1266,11 @@ def main():
     classical_cut_label = ttk.Label(metadata_frame, text='Cut:')
     classical_cut_entry = ttk.Entry(metadata_frame)
 
-    metadata_widgets = [album_label, album_combobox, track_label, track_combobox, keep_artist_checkbutton,
-                        classical_type_label, classical_type_combobox, classical_number_label,
-                        classical_number_combobox, classical_key_label, classical_key_combobox, classical_work_label,
-                        classical_work_combobox, classical_comment_label, classical_comment_combobox,
-                        classical_cut_label, classical_cut_entry]
+    metadata_mode_widgets = [album_label, album_combobox, track_label, track_combobox, keep_artist_checkbutton,
+                             classical_type_label, classical_type_combobox, classical_number_label,
+                             classical_number_combobox, classical_key_label, classical_key_combobox,
+                             classical_work_label, classical_work_combobox, classical_comment_label,
+                             classical_comment_combobox, classical_cut_label, classical_cut_entry]
 
     # error message widgets
     error_text = ScrolledText(error_frame, wrap=tkinter.WORD, height=10, state='disabled')
