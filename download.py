@@ -5,12 +5,15 @@ import shutil  # moving files between drives when syncing
 import subprocess
 import tkinter
 import webbrowser
+from time import sleep
 from datetime import datetime
+import threading
+import queue
 from pprint import pprint
 from tkinter import *
 from tkinter import ttk, filedialog, messagebox, simpledialog
 from tkinter.scrolledtext import ScrolledText
-from typing import Any
+from typing import Any, Union
 from pydub import AudioSegment
 
 import youtube_dl
@@ -35,6 +38,7 @@ class Globals:
     start = datetime.now()
     metadata_file: dict[str, dict[str, str]] = {}
     saved_urls: dict[str, dict[str, str]] = {}
+    num_threads: int = 128
 
     try:
         with open('metadata.json', 'r') as f:
@@ -362,9 +366,7 @@ def main():
             Globals.current_file = Globals.files[index]
             file = Globals.current_file
 
-            video_text = f"Select Metadata for: \"{file['originaltitle']}\""
-            if 'playlist_index' in file and 'playlist_length' in file:
-                video_text += f" ({file['playlist_index']}/{file['playlist_length']})"
+            video_text = f"Select Metadata for: \"{file['originaltitle']}\" ({index}/{len(Globals.files)})"
             select_metadata_variable.set(video_text)
 
             # save previous artist and album before they get changed
@@ -563,7 +565,6 @@ def main():
         enable_widgets(download_widgets)
         url_combobox.set('')
         progress_text.set('')
-        video.set('')
         select_metadata_variable.set('')
         output_folder_variable.set('Folder: Default (click to open)')
 
@@ -607,23 +608,24 @@ def main():
         # prevent windows sleep mode
         ctypes.windll.kernel32.SetThreadExecutionState(0x80000001)
 
+        # obtain info to decide between video or playlist download
         url = url_combobox.get()
+        url = Globals.saved_urls[url]['url'] if url in Globals.saved_urls else url
+
         ydl_opts = {
             'format': 'bestaudio/best',
             'outtmpl': 'out/%(id)s.%(ext)s',
             'postprocessors': [{
                 'key': 'FFmpegExtractAudio',
                 'preferredcodec': 'mp3'
-                }],
-            'ignoreerrors': True,
-            'progress_hooks': [hook],
+            }],
             'match_filter': get_info_dict,
             'logger': Logger(),
             'default_search': 'ytsearch'
         }
 
         ydl = youtube_dl.YoutubeDL(ydl_opts)
-        info = ydl.extract_info(Globals.saved_urls[url]['url'] if url in Globals.saved_urls else url)
+        info = ydl.extract_info(url, process=False)
 
         # reset if info is empty
         if not info:
@@ -631,45 +633,68 @@ def main():
             ctypes.windll.kernel32.SetThreadExecutionState(0x80000000)
             return
 
-        video.set('')
-
-        # check which videos haven't been downloaded when downloading a playlist
+        # playlist download
         if info['webpage_url_basename'] == 'playlist':
-            def get_not_downloaded(info) -> str:
-                results = ''
+            def download_from_playlist(video_id):
+                try:
+                    ydl.extract_info('https://youtu.be/' + video_id)
+                except youtube_dl.DownloadError as e:
+                    video_queue.put(video_id)
 
-                for entry in info['entries']:
-                    if entry and 'id' in entry and entry['id']:
-                        if not os.path.isfile(os.path.join('out', entry['id'] + '.mp3')) and \
-                                not entry['id'] in Globals.already_finished:
-                            results += str(entry["playlist_index"]) + ','
+            def threading_worker():
+                while True:
+                    try:
+                        id = video_queue.get(block=False)
+                        download_from_playlist(id)
+                        video_queue.task_done()
+                    except queue.Empty:
+                        break
 
-                return results.rstrip(',')
+            entries = list(info['entries'])
+            ids = [e['id'] for e in entries]
 
-            not_downloaded = get_not_downloaded(info)
+            video_queue = queue.Queue()
+            for id in ids:
+                video_queue.put(id)
 
-            # try to download all not downloaded videos again
-            if not_downloaded:
-                print_error('download',
-                            f'{(len(not_downloaded) + 1) // 2} videos have not been downloaded. Trying again...')
-                ydl_opts['playlist_items'] = not_downloaded
-                ydl = youtube_dl.YoutubeDL(ydl_opts)
-                ydl.download([Globals.saved_urls[url] if url in Globals.saved_urls else url])
+            threads = []
+            for i in range(Globals.num_threads):
+                t = threading.Thread(target=threading_worker)
+                t.start()
+                threads.append(t)
 
-            not_downloaded = get_not_downloaded(info)
+            playlist_title = info['title']
+            playlist_length = len(entries)
+            active_threads = 1
+            while active_threads:
+                queue_length = video_queue.qsize()
+                active_threads = len([t for t in threads if t.is_alive()])
+                videos_done = playlist_length - queue_length - active_threads
 
-            # print IDs of all videos that still couldn't be downloaded
-            if not_downloaded:
-                print_error('download',
-                            f'{(len(not_downloaded) + 1) // 2} videos could not be downloaded. '
-                            f'Their indexes are: {not_downloaded}')
+                progress = videos_done / playlist_length * 100
+
+                progress_bar.set(progress)
+                progress_text.set(f'Downloading playlist "{playlist_title}" with {active_threads} threads, '
+                                  f'{videos_done}/{playlist_length} ({round(progress, 1)}%) finished, '
+                                  f'{sec_to_min((datetime.now() - Globals.start).seconds)} elapsed')
+                sleep(1)
+
+        # video download
+        else:
+            ydl_opts['progress_hooks'] = [video_hook]
+            ydl = youtube_dl.YoutubeDL(ydl_opts)
+            while True:
+                try:
+                    ydl.extract_info(url)
+                    break
+                except youtube_dl.DownloadError as e:
+                    print_error('download', str(e) + " (Trying again)")
+                    continue
 
         progress_bar.set(0)
 
-        time = (datetime.now() - Globals.start).seconds
         progress_text.set(f"Downloaded {len(Globals.files)} video{'s' if len(Globals.files) != 1 else ''} in "
-                          f"{sec_to_min(time)}")
-        video.set('')
+                          f"{sec_to_min((datetime.now() - Globals.start).seconds)}")
 
         # delete all files from the destination folder that are not in the dont_delete list
         # (which means they were removed from the playlist) (only in sync mode)
@@ -677,12 +702,11 @@ def main():
             for f in Globals.already_finished.values():
                 if f not in Globals.dont_delete:
                     try:
-                        if sync_ask_delete.get() == '0':
-                            os.remove(os.path.join(Globals.folder, f))
-                            print_error('sync', f'Deleting {f}')
-                        elif messagebox.askyesno(title='Delete file?', icon='question',
-                                                 message=f'The video connected to "{f}" is not in the playlist '
-                                                         f'anymore. Do you want to delete the file?'):
+                        if sync_ask_delete.get() == '0' or messagebox.askyesno(title='Delete file?', icon='question',
+                                                                               message=f'The video connected to "{f}" '
+                                                                                       f'is not in the playlist '
+                                                                                       f'anymore. Do you want to '
+                                                                                       f'delete the file?'):
                             os.remove(os.path.join(Globals.folder, f))
                             print_error('sync', f'Deleting {f}')
                     except OSError as e:
@@ -712,6 +736,7 @@ def main():
         # prevent windows sleep mode
         ctypes.windll.kernel32.SetThreadExecutionState(0x80000001)
 
+        mode = download_mode.get()
         url = url_combobox.get()
         ydl_opts = {
             'ignoreerrors': True,
@@ -720,105 +745,102 @@ def main():
         }
 
         ydl = youtube_dl.YoutubeDL(ydl_opts)
-        info = ydl.extract_info(Globals.saved_urls[url] if url in Globals.saved_urls else url,
-                                download=False)  # ie_key='Youtube' could be faster
+        info = ydl.extract_info(Globals.saved_urls[url]['url'] if url in Globals.saved_urls else url, download=False,
+                                process=mode == 'metadata')
 
-        # mode dependent actions
-        mode = download_mode.get()
-        if mode == 'metadata':
-            try:
-                with open(f'out/{safe_filename(info["title"])}.json', 'w') as f:
-                    json.dump(info, f)
-            except OSError as e:
-                print_error('OS', e)
-            except Exception as e:
-                print_error('download_metadata', e)
-
-        elif mode == 'length':
-            def convert_time(sec):
-                h = sec // 3600
-                min = sec % 3600 // 60
-                seconds = sec % 60
-                return f'{h}:{"0" if min < 10 else ""}{min}:{"0" if seconds < 10 else ""}{seconds}'
-
-            duration = 0
-            playlist = False
-            if info['webpage_url_basename'] == 'playlist':
-                playlist = True
-                for entry in info['entries']:
-                    if entry:
-                        duration += entry['duration']
-            elif info['duration']:
-                duration = info['duration']
-
-            print_error('length',
-                        f'Length of {"playlist" if playlist else "video"} "{info["title"]}": {convert_time(duration)}')
-
-        elif mode == 'backup':
-            # make backups folder if it doesn't exist
-            try:
-                os.mkdir('backups')
-            except OSError:
-                pass
-
-            # load old file if the playlist has been backed up before
-            old_file = {}
-            try:
-                with open(f'backups/{info["id"]}.json', 'r') as f:
-                    old_file = json.load(f)
-            except Exception:
-                print_error('backup', 'No earlier backup found')
-
-            # extract title, uploader and description from info
-            new_file: dict[str, Any] = {'title': info['title']}
-            if info['webpage_url_basename'] == 'playlist':
-                for entry in info['entries']:
-                    if entry:
-                        new_file[entry['id']] = {'title': entry['title'], 'uploader': entry['uploader'],
-                                                 'description': entry['description']}
-            # compare both files if the playlist has been backed up before
-            if old_file:
-                both = []
-                for entry in old_file:
-                    if entry in new_file:
-                        both.append(entry)
-
-                deleted = {k: v for (k, v) in old_file.items() if k not in both}
-                added = {k: v for (k, v) in new_file.items() if k not in both}
-
-                if added:
-                    print_error('backup', f'{len(added)} videos have been added to the playlist:')
-                    for entry in added:
-                        print_error('backup', f'{added[entry]["title"]}, {added[entry]["uploader"]}, {entry}')
-                    print_error('backup', '------------------------------')
-
-                if deleted:
-                    print_error('backup', f'{len(deleted)} videos have been deleted from the playlist:')
-                    for entry in deleted:
-                        print_error('backup', f'{deleted[entry]["title"]}, {deleted[entry]["uploader"]}, {entry}')
-                    print_error('backup', '------------------------------')
-
-                if not added and not deleted:
-                    print_error('backup', 'No changes found')
-
-                # save changes to file
-                changes = {'time': datetime.now().strftime('%Y-%m-%d, %H:%M:%S'), 'added': added, 'deleted': deleted}
-                changes_file = []
+        if info:
+            # mode dependent actions
+            if mode == 'metadata':
                 try:
-                    with open(f'backups/{info["id"]}_changes.json', 'r') as f:
-                        changes_file = json.load(f)
+                    with open(f'out/{safe_filename(info["title"])}.json', 'w') as f:
+                        json.dump(info, f)
+                except OSError as e:
+                    print_error('OS', e)
                 except Exception as e:
-                    print_error('backup', e)
+                    print_error('download_metadata', e)
 
-                with open(f'backups/{info["id"]}_changes.json', 'w') as f:
-                    changes_file.append(changes)
-                    json.dump(changes_file, f)
-                    print_error('backup', f'Changes have been saved to {f.name}')
+            elif mode == 'length':
+                def convert_time(sec):
+                    h = int(sec // 3600)
+                    min = int(sec % 3600 // 60)
+                    seconds = int(sec % 60)
+                    return f'{h}:{"0" if min < 10 else ""}{min}:{"0" if seconds < 10 else ""}{seconds}'
 
-            # save new data to old file
-            with open(f'backups/{info["id"]}.json', 'w') as f:
-                json.dump(new_file, f)
-                print_error('backup', f'New playlist data has been backed up to {f.name}')
+                try:
+                    playlist = info['webpage_url_basename'] == 'playlist'
+                    duration = sum([i['duration'] for i in list(info['entries'])]) if playlist else info['duration']
+
+                    print_error('length',
+                                f'Length of {"playlist" if playlist else "video"} "{info["title"]}": {convert_time(duration)}')
+                except KeyError as e:
+                    print_error('length', e)
+
+            elif mode == 'backup':
+                # make backups folder if it doesn't exist
+                try:
+                    os.mkdir('backups')
+                except OSError:
+                    pass
+
+                # load old file if the playlist has been backed up before
+                old_file: dict[str, dict[str, str]] = {}
+                try:
+                    with open(f'backups/{info["id"]}.json', 'r') as f:
+                        old_file = json.load(f)
+                except FileNotFoundError:
+                    print_error('backup', 'No earlier backup found')
+
+                # extract title, uploader and description from info
+                new_file: dict[str, dict[str, str]] = {'title': info['title']}
+                if info['webpage_url_basename'] == 'playlist' and 'entries' in info and info['entries']:
+                    for entry in list(info['entries']):
+                        if entry:
+                            new_file[entry['id']] = {'title': entry['title'], 'uploader': entry['uploader']}
+
+                # compare both files if the playlist has been backed up before
+                if old_file:
+                    both = []
+                    for entry in old_file:
+                        if entry in new_file:
+                            both.append(entry)
+
+                    deleted = {k: v for (k, v) in old_file.items() if k not in both}
+                    added = {k: v for (k, v) in new_file.items() if k not in both}
+
+                    if added:
+                        print_error('backup', f'{len(added)} videos have been added to the playlist:')
+                        for entry in added:
+                            print_error('backup', f'{added[entry]["title"]}, {added[entry]["uploader"]}, {entry}')
+                        print_error('backup', '--------------------------------------------------------------------')
+
+                    if deleted:
+                        print_error('backup', f'{len(deleted)} videos have been deleted from the playlist:')
+                        for entry in deleted:
+                            print_error('backup', f'{deleted[entry]["title"]}, {deleted[entry]["uploader"]}, {entry}')
+                        print_error('backup', '--------------------------------------------------------------------')
+
+                    if not added and not deleted:
+                        print_error('backup', 'No changes found')
+
+                    # save changes to file
+                    changes = {'time': datetime.now().strftime('%Y-%m-%d, %H:%M:%S'), 'added': added,
+                               'deleted': deleted}
+                    changes_file = []
+                    try:
+                        with open(f'backups/{info["id"]}_changes.json', 'r') as f:
+                            changes_file = json.load(f)
+                    except FileNotFoundError as e:
+                        print_error('backup', e)
+
+                    with open(f'backups/{info["id"]}_changes.json', 'w') as f:
+                        changes_file.append(changes)
+                        json.dump(changes_file, f)
+                        print_error('backup', f'Changes have been saved to {f.name}')
+
+                # save new data to old file
+                with open(f'backups/{info["id"]}.json', 'w') as f:
+                    json.dump(new_file, f)
+                    print_error('backup', f'New playlist data has been backed up to {f.name}')
 
         reset()
 
@@ -830,64 +852,31 @@ def main():
     # video downloading,    call from get_info_dict: title, playlist (None), playlist_index (None)
     # playlist downloading, call from hook:          originaltitle, playlist, playlist_index, playlist_length, downloaded_bytes, total_bytes, eta
     # playlist downloading, call from get_info_dict: title, playlist, playlist_index, n_entries
-    def update_progress(video_info, download_info):
+    def update_progress_video(video_info, download_info):
         try:
             title = video_info['originaltitle'] if 'originaltitle' in video_info else video_info['title']
 
-            # playlist download
-            if 'playlist' in video_info and video_info['playlist']:
-                length = video_info['n_entries'] if 'n_entries' in video_info else video_info['playlist_length']
-
-                time = sec_to_min((datetime.now() - Globals.start).seconds)
-                progress = ((video_info['playlist_index'] - 1) / length
-                            + ((download_info['downloaded_bytes'] / download_info['total_bytes'] / length)
-                               if download_info else 0)) * 100
-
-                progress_content = (
-                        f"Downloading playlist \"{video_info['playlist']}\"" +
-                        (f", {video_info['playlist_index']}/{length} ({round(progress, 1)}% finished, "
-                         if progress <= 100 else ' (') +
-                        f"{time} elapsed)"
-                )
-
-                video_content = (
-                        f"Current video: {title}" +
-                        (f", {download_info['downloaded_bytes'] * 100 // download_info['total_bytes']}% "
-                         f"finished, {sec_to_min(download_info['eta'])} left" if download_info else '')
-                )
-
-            # video download
-            else:
-                progress = (download_info['downloaded_bytes'] / download_info['total_bytes'] * 100) \
-                    if download_info else 0
-                progress_content = (
-                        f"Downloading: {title}" +
-                        (f", {round(progress)}% finished, {sec_to_min(download_info['eta'])} left"
-                         if download_info else '')
-                )
-                video_content = ''
+            progress = download_info['downloaded_bytes'] / download_info['total_bytes'] * 100
+            progress_content = (
+                f"Downloading video {title}, {round(progress)}% finished, {sec_to_min(download_info['eta'])} left"
+            )
 
             progress_bar.set(progress)
             progress_text.set(progress_content)
-            video.set(video_content)
         except Exception as e:
             print_error("GUI updater", e)
             progress_text.set('Downloading...')
-            video.set('')
 
         Tk.update(root)
 
-    def hook(d):
+    def video_hook(d):
         # get current file
         file = Globals.files[-1]
 
         if d['status'] == 'downloading':
-            update_progress(file, d)
+            update_progress_video(file, d)
         if d['status'] == 'finished':
-            if 'playlist' in file:
-                video.set('Converting...')
-            else:
-                progress_text.set('Converting...')
+            progress_text.set('Converting...')
         Tk.update(root)
 
     def get_info_dict(info_dict):
@@ -896,9 +885,6 @@ def main():
         if info_dict['id'] in Globals.already_finished:
             Globals.dont_delete.append(Globals.already_finished[info_dict['id']])
             print_error('download', f"{info_dict['id']}: File with metadata already present")
-
-            update_progress(info_dict, [])
-
             return f"{info_dict['id']}: File with metadata already present"
 
         file: dict[str, Any] = generate_metadata_choices(info_dict)
@@ -913,7 +899,6 @@ def main():
         # don't download if file is already present
         if os.path.isfile(os.path.join('out', info_dict['id'] + '.mp3')):
             print_error('download', f"{info_dict['id']}: File already present")
-            update_progress(info_dict, [])
             return f"{info_dict['id']}: File already present"
 
     # GUI methods
@@ -1104,7 +1089,7 @@ def main():
                 work_numbers: list[str] = work.split(' ')
                 real_work = ((formats[artist] + ' ') if artist in formats else 'Op. ') + work_numbers[0] + \
                             (((' No. ' if artist != 'Haydn' else ':') + work_numbers[1])
-                                if len(work_numbers) > 1 and work_numbers[1] else '') + \
+                             if len(work_numbers) > 1 and work_numbers[1] else '') + \
                             ((': ' + ' '.join(work_numbers[2:])) if len(work_numbers) > 2 else '')
 
             title_combobox.set("{0}{1}{2}{3}{4}".format(type,
@@ -1156,7 +1141,6 @@ def main():
     sync_ask_delete.set('1')
     progress_text = StringVar()
     progress_bar = DoubleVar()
-    video = StringVar()
     select_metadata_variable = StringVar()
     metadata_file_variable = StringVar()
     swap_variable = StringVar()
@@ -1211,12 +1195,11 @@ def main():
     save_url_button = ttk.Button(download_frame, text='Save...', command=save_url)
     output_folder_label = ttk.Label(download_frame, textvariable=output_folder_variable)
     output_folder_button = ttk.Button(download_frame, text='Select output folder...', command=select_output_folder)
-    download_button = ttk.Button(download_frame, text='Download', command=download)
+    download_button = ttk.Button(download_frame, text='Download', command=threading.Thread(target=download).start)
     sync_ask_delete_checkbutton = ttk.Checkbutton(download_frame, text='Ask before deleting files',
                                                   variable=sync_ask_delete)
     progress_label = ttk.Label(download_frame, text='', textvariable=progress_text)
     download_progress = ttk.Progressbar(download_frame, orient=HORIZONTAL, mode='determinate', variable=progress_bar)
-    video_label = ttk.Label(download_frame, text='', textvariable=video)
 
     # download widgets that get enabled/disabled
     download_widgets = [url_combobox, save_url_button, output_folder_button, download_button]
@@ -1296,9 +1279,8 @@ def main():
     output_folder_button.grid(row=1, column=0, pady=(5, 0), sticky='W')
     output_folder_label.grid(row=1, column=width // 6, columnspan=width - width // 6, sticky='W')
     download_button.grid(row=20, column=width // 6, pady=(5, 0), sticky='W')
-    download_progress.grid(row=21, column=0, columnspan=width, sticky='EW')
+    download_progress.grid(row=21, column=0, columnspan=width, pady=5, sticky='EW')
     progress_label.grid(row=22, column=0, columnspan=width)
-    video_label.grid(row=23, column=0, columnspan=width)
 
     metadata_frame.grid(row=1, column=0, sticky='NEW', padx=5, pady=5)
     select_metadata_label.grid(row=0, column=0, columnspan=width, sticky='W')
