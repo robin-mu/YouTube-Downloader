@@ -27,8 +27,9 @@ os.chdir(os.path.dirname(os.path.realpath(__file__)))
 
 class Globals:
     folder: str = ''  # folder to sync with
-    files: list[dict[str, Any]] = []
-    current_file: dict[str, Any] = {}
+    files: list[dict[str, Union[str, list[str]]]] = []
+    files_iterator = None
+    current_file: dict[str, Union[str, list[str]]] = {}
     # dict of IDs and filenames of videos that are already present in the output folder and where metadata has been
     # set
     already_finished: dict[str, str] = {}
@@ -41,7 +42,7 @@ class Globals:
     num_threads: int = 128
 
     try:
-        with open('metadata.json', 'r') as f:
+        with open('metadata.json', 'r', encoding='utf-8') as f:
             metadata_file = json.load(f)
         with open('saved_urls.json', 'r') as f:
             saved_urls = json.load(f)
@@ -168,7 +169,7 @@ def main():
         print(msg)
         Tk.update(root)
 
-    def generate_metadata_choices(metadata: dict[str, Any]) -> dict[str, Any]:
+    def generate_metadata_choices(metadata: dict[str, Any]) -> dict[str, Union[str, list[str]]]:
         choices = {'id': metadata['id'], 'originaltitle': metadata['title']}
 
         title_choices: list[str] = []
@@ -187,14 +188,11 @@ def main():
             track_choices.append(file_data['track'])
 
         def remove_brackets(text: str) -> str:
-            while '(' in text and ')' in text:
-                split: list[str] = text.split('(', 1)
-                text = split[0].strip() + ' ' + \
-                       (split[1].split(')', 1)[1].strip() if ')' in split[1] else split[1].strip())
-            while '[' in text and ']' in text:
-                split: list[str] = text.split('[', 1)
-                text = split[0].strip() + ' ' + \
-                       (split[1].split(']', 1)[1].strip() if ']' in split[1] else split[1].strip())
+            for b in ['()', '[]']:
+                while b[0] in text and b[1] in text:
+                    split: list[str] = text.split(b[0], 1)
+                    text = split[0].strip() + ' ' + \
+                           (split[1].split(b[1], 1)[1].strip() if b[1] in split[1] else split[1].strip())
             for c in ['(', ')', '[', ']']:
                 text = text.replace(c, '')
             return text.strip()
@@ -345,29 +343,21 @@ def main():
 
         return choices
 
-    def update_combobox(from_start: bool):
-        # start at 0 if True / next video if False
-        if from_start:
-            index = 0
-        else:
-            index = Globals.files.index(Globals.current_file) + 1
+    def update_combobox():
+        try:
+            # get next file from iterator
+            file = next(Globals.files_iterator)
 
-        # If 'Apply metadata from json' checkbutton is checked: check if ID at current index is in the loaded metadata
-        # and apply it
-        while index < len(Globals.files) and Globals.files[index]['id'] in Globals.metadata_file and \
-                metadata_file_variable.get() == '1':
-            id = Globals.files[index]['id']
-            data = Globals.metadata_file[id]
-            apply_metadata(id, data)
-            index += 1
+            # If 'Apply metadata from json' checkbutton is checked: check if ID at current index is in the loaded
+            # metadata and apply it
+            while metadata_file_variable.get() == '1' and file['id'] in Globals.metadata_file:
+                apply_metadata(file['id'], Globals.metadata_file[file['id']])
+                file = next(Globals.files_iterator)
 
-        # reset if end of playlist is reached
-        if index < len(Globals.files):
-            Globals.current_file = Globals.files[index]
-            file = Globals.current_file
+            Globals.current_file = file
 
-            video_text = f"Select Metadata for: \"{file['originaltitle']}\" ({index}/{len(Globals.files)})"
-            select_metadata_variable.set(video_text)
+            select_metadata_variable.set(f"Select metadata for: \"{file['originaltitle']}\" "
+                                         f"({Globals.files.index(file) + 1}/{len(Globals.files)})")
 
             # save previous artist and album before they get changed
             if metadata_mode.get() == 'vgm' or metadata_mode.get() == 'album':
@@ -433,7 +423,7 @@ def main():
 
                 if file['file']:
                     title_combobox.set(file['title'][0])
-        else:
+        except StopIteration:
             reset()
 
     def apply_metadata(id, data):
@@ -450,11 +440,11 @@ def main():
                     # beginning, 4 seconds after the cut from 1:30 to 1:40 and 5 seconds to the end
 
                     highest: int = 0
-                    for cut in data['cut'].split('-'):
+                    for cut in data['cut'].split('-'):  # ['3+5 1:30+4', '1:40 2:30+5']
                         split_space: list[str] = cut.split(' ')  # a) ['3+5', '1:30+4'] b) ['1:40', '2:30+5']
 
                         if '+' in split_space[0]:  # true for a), false for b)
-                            split_plus: list[str] = split_space[0].split('+')  # ['3', '5']
+                            split_plus: list[str] = split_space[0].split('+')  # a) ['3', '5']
                             if int(split_plus[0]) > highest:
                                 highest = int(split_plus[0])
                             f.write("file 's.mp3'\n")
@@ -482,8 +472,8 @@ def main():
                                 f.write(f'outpoint {split_space[1]}\n')
 
                 if highest > 0:
-                    subprocess.run(f'ffmpeg.exe -filter_complex'
-                                   f' anullsrc=sample_rate={AudioSegment.from_mp3(path).frame_rate} -t {highest} s.mp3')
+                    subprocess.run(f'ffmpeg.exe -filter_complex '
+                                   f'anullsrc=sample_rate={AudioSegment.from_mp3(path).frame_rate} -t {highest} s.mp3')
 
                 # run ffmpeg to cut the file
                 subprocess.run(f'ffmpeg.exe -f concat -safe 0 -i cut.info -c copy "{filename}"')
@@ -505,11 +495,11 @@ def main():
                 id3.add(TALB(text=data['album']))
                 id3.add(TRCK(text=str(data['track'])))
 
-                if metadata_mode.get() == 'vgm':
-                    id3.add(TCON(text='VGM'))
+            # Genre based on metadata mode
+            genres: dict[str, str] = {'vgm': 'VGM', 'classical': 'Klassik'}
+            if metadata_mode.get() in genres:
+                id3.add(TCON(text=genres[metadata_mode.get()]))
 
-            if metadata_mode.get() == 'classical':
-                id3.add(TCON(text='Klassik'))
             id3.save()
 
             if 'cut' not in data:
@@ -665,10 +655,8 @@ def main():
 
             playlist_title = info['title']
             playlist_length = len(entries)
-            active_threads = 1
-            while active_threads:
+            while active_threads := len([t for t in threads if t.is_alive()]):
                 queue_length = video_queue.qsize()
-                active_threads = len([t for t in threads if t.is_alive()])
                 videos_done = playlist_length - queue_length - active_threads
 
                 progress = videos_done / playlist_length * 100
@@ -720,7 +708,10 @@ def main():
             reset()
             return
 
-        update_combobox(True)
+        # create iterator from files list
+        Globals.files_iterator = iter(Globals.files)
+
+        update_combobox()
 
         # start metadata selection if not all metadata has been already set (reset in update_combobox hasn't been
         # executed yet)
@@ -771,7 +762,8 @@ def main():
                     duration = sum([i['duration'] for i in list(info['entries'])]) if playlist else info['duration']
 
                     print_error('length',
-                                f'Length of {"playlist" if playlist else "video"} "{info["title"]}": {convert_time(duration)}')
+                                f'Length of {"playlist" if playlist else "video"} "{info["title"]}": '
+                                f'{convert_time(duration)}')
                 except KeyError as e:
                     print_error('length', e)
 
@@ -870,13 +862,13 @@ def main():
         Tk.update(root)
 
     def video_hook(d):
-        # get current file
         file = Globals.files[-1]
 
         if d['status'] == 'downloading':
             update_progress_video(file, d)
         if d['status'] == 'finished':
             progress_text.set('Converting...')
+
         Tk.update(root)
 
     def get_info_dict(info_dict):
@@ -887,7 +879,7 @@ def main():
             print_error('download', f"{info_dict['id']}: File with metadata already present")
             return f"{info_dict['id']}: File with metadata already present"
 
-        file: dict[str, Any] = generate_metadata_choices(info_dict)
+        file: dict[str, Union[str, list[str]]] = generate_metadata_choices(info_dict)
 
         # avoid duplicate entries with same ID
         for f in Globals.files:
@@ -920,32 +912,38 @@ def main():
         if metadata_mode.get() == 'classical' and classical_cut_entry.get().strip():
             file['cut'] = classical_cut_entry.get()
         apply_metadata(file['id'], file)
-        update_combobox(False)
+        update_combobox()
 
     def apply_metadata_auto():
         previous_artist = artist_combobox.get()
         previous_album = album_combobox.get()
+        f = Globals.current_file
 
-        for f in Globals.files:
-            f['artist'] = f['artist'][0] if keep_artist_variable.get() == '0' else previous_artist
-            f['title'] = f['title'][0]
-            if metadata_mode.get() == 'vgm':
-                f['album'] = f['artist'] + ' OST' if keep_artist_variable.get() == '0' else previous_album
-            elif keep_artist_variable.get() == '1':
-                f['album'] = previous_album
-            else:
-                f['album'] = f['album'][0] if f['album'] else ''
-            f['track'] = f['track'][0] if f['track'] else ''
-            apply_metadata(f['id'], f)
-        reset()
+        try:
+            while True:
+                f['artist'] = f['artist'][0] if keep_artist_variable.get() == '0' else previous_artist
+                f['title'] = f['title'][0]
+                if metadata_mode.get() == 'vgm':
+                    f['album'] = f['artist'] + ' OST' if keep_artist_variable.get() == '0' else previous_album
+                elif keep_artist_variable.get() == '1':
+                    f['album'] = previous_album
+                else:
+                    f['album'] = f['album'][0] if f['album'] else ''
+                f['track'] = f['track'][0] if f['track'] else ''
+                apply_metadata(f['id'], f)
+
+                f = next(Globals.files_iterator)
+        except StopIteration:
+            reset()
 
     def apply_metadata_file():
         if metadata_file_variable.get() == '1' and Globals.current_file and \
                 Globals.current_file['id'] in Globals.metadata_file:
             id = Globals.current_file['id']
             data = Globals.metadata_file[id]
+
             apply_metadata(id, data)
-            update_combobox(False)
+            update_combobox()
 
     def save_url():
         url = simpledialog.askstring(title='Save URL',
@@ -990,8 +988,7 @@ def main():
         for w in download_mode_widgets:
             w.grid_forget()
 
-        mode = download_mode.get()
-        if mode == 'download':
+        if (mode := download_mode.get()) == 'download':
             output_folder_button['text'] = 'Select output folder'
             download_button['text'] = 'Download'
             download_button['command'] = download
@@ -1017,18 +1014,15 @@ def main():
         for w in metadata_mode_widgets:
             w.grid_forget()
 
-        mode: str = metadata_mode.get()
-
         artist_variable.set('Select the artist:')
-        if mode == 'album' or mode == 'vgm':
+        if (mode := metadata_mode.get()) == 'album' or mode == 'vgm':
             album_label.grid(row=10, column=0, columnspan=width // 6, sticky='W', pady=2)
             album_combobox.grid(row=10, column=width // 6, columnspan=4, sticky='EW')
             track_label.grid(row=11, column=0, columnspan=width // 6, sticky='W', pady=2)
             track_combobox.grid(row=11, column=width // 6, columnspan=4, sticky='EW')
             keep_artist_checkbutton.grid(row=12, column=0, sticky='W')
 
-            if Globals.current_file:
-                file = Globals.current_file
+            if file := Globals.current_file:
                 if mode == 'album':
                     album_combobox.set(file['album'][0])
                     album_combobox['values'] = file['album']
@@ -1057,8 +1051,7 @@ def main():
     # event methods
     # track changes of comboboxes to update other comboboxes
     def url_combobox_write(*args):
-        if url_combobox.get() in Globals.saved_urls:
-            url = url_combobox.get()
+        if (url := url_combobox.get()) in Globals.saved_urls:
             Globals.folder = Globals.saved_urls[url]['folder']
             output_folder_variable.set(
                 'Folder: ' + (Globals.folder if Globals.folder else 'Default') + ' (click to open)')
@@ -1093,10 +1086,10 @@ def main():
                             ((': ' + ' '.join(work_numbers[2:])) if len(work_numbers) > 2 else '')
 
             title_combobox.set("{0}{1}{2}{3}{4}".format(type,
-                                                        ((' No. ' + number) if number else ''),
-                                                        ((' in ' + real_key) if real_key else ''),
-                                                        ((', ' + real_work) if real_work else ''),
-                                                        (' (' + comment + ')' if comment else '')
+                                                        (' No. ' + number) if number else '',
+                                                        (' in ' + real_key) if real_key else '',
+                                                        (', ' + real_work) if real_work else '',
+                                                        ' (' + comment + ')' if comment else ''
                                                         ))
 
     # track change of window size
@@ -1195,7 +1188,8 @@ def main():
     save_url_button = ttk.Button(download_frame, text='Save...', command=save_url)
     output_folder_label = ttk.Label(download_frame, textvariable=output_folder_variable)
     output_folder_button = ttk.Button(download_frame, text='Select output folder...', command=select_output_folder)
-    download_button = ttk.Button(download_frame, text='Download', command=threading.Thread(target=download).start)
+    download_button = ttk.Button(download_frame, text='Download',
+                                 command=lambda: threading.Thread(target=download).start())
     sync_ask_delete_checkbutton = ttk.Checkbutton(download_frame, text='Ask before deleting files',
                                                   variable=sync_ask_delete)
     progress_label = ttk.Label(download_frame, text='', textvariable=progress_text)
