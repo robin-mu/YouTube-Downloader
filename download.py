@@ -28,13 +28,9 @@ os.chdir(os.path.dirname(os.path.realpath(__file__)))
 class Globals:
     folder: str = ''  # folder to sync with
     files: dict[str, dict[str, Union[str, list[str]]]] = {}
-    files_iterator = None
-    current_file: dict[str, Union[str, list[str]]] = {}
-    # dict of IDs and filenames of videos that are already present in the output folder and where metadata has been
-    # set
+    # dict of IDs and filenames of videos that are already present in the output folder and where metadata has been set
     already_finished: dict[str, str] = {}
-    # list of filenames that are already downloaded but still in the playlist, so they shouldn't be deleted when
-    # syncing
+    # list of filenames that are already downloaded but still in the playlist, so they shouldn't be deleted when syncing
     dont_delete: list[str] = []
     start = datetime.now()
     metadata_file: dict[str, dict[str, str]] = {}
@@ -67,13 +63,13 @@ class Globals:
         'Scarlatti': 'K.',
         'Schubert': 'D.'
     }
-    classical_work_formats: list[str] = list(dict.fromkeys(['Op.'] + [f for f in
-                                                                      classical_work_format_special.values()]))
+    classical_work_formats: list[str] = list(dict.fromkeys(['Op.'] + list(classical_work_format_special.values())))
     classical_composers: list[str] = classical_work_format_opus + \
-                                     [item for item in classical_work_format_special.keys()] + \
+                                     list(classical_work_format_special.keys()) + \
                                      ['Debussy', 'Tarrega', 'Franz von Suppè', 'Bizet', 'Gershwin', 'Verdi',
                                       'Holst', 'Offenbach', 'Khachaturian', 'Delibes', 'Liszt', 'Ravel',
                                       'Rossini', 'Satie', 'Vivaldi', 'Wagner']
+
     # Consistent names for composers that are spelled in different ways
     classical_composers_real: dict[str, str] = {
         'Dvorak': 'Dvořák',
@@ -126,7 +122,7 @@ class MetadataSelection:
         self.mode: str = mode
         for i, f in enumerate(metadata):
             self.vars.append([StringVar() for _ in range(6)])
-            self.rows.append([ttk.Label(root, text=f['originaltitle'], width=50),
+            self.rows.append([ttk.Label(root, text=f['originaltitle'], width=50, cursor='hand2'),
                               ttk.Combobox(root, values=f['artist'], textvariable=self.vars[i][0], width=40),
                               ttk.Checkbutton(root, command=lambda row=i: self.capitalize(row, 2)),
                               ttk.Checkbutton(root, command=lambda row=i: self.new_swap(row)),
@@ -169,6 +165,10 @@ class MetadataSelection:
             self.rows[i][14].insert(0, Globals.metadata_file[f['id']]['cut'] if f[
                                                                                     'id'] in Globals.metadata_file and 'cut' in
                                                                                 Globals.metadata_file[f['id']] else '')
+
+            # probably not necessary
+            # if f['file']:
+            #     self.rows[i][4].set(f['title'][0])
 
             for j in range(6):
                 self.vars[i][j].trace_add('write', lambda _a, _b, _c, row=i: self.combobox_write(row))
@@ -257,8 +257,13 @@ class MetadataSelection:
 
     def previous_artist_album(self, row):
         if row > 0:
-            self.rows[row][1].set(self.rows[row - 1][1].get())
-            self.rows[row][6].set(self.rows[row - 1][6].get())
+            previous_artist = self.rows[row - 1][1].get()
+            self.rows[row][1].set(previous_artist)
+            self.rows[row][1]['values'] += (previous_artist,)
+
+            previous_album = self.rows[row - 1][6].get()
+            self.rows[row][6].set(previous_album)
+            self.rows[row][6]['values'] += (previous_album,)
 
     def reset(self):
         for i, l in enumerate(self.rows):
@@ -489,91 +494,6 @@ def main():
 
         return choices
 
-    def update_combobox():
-        try:
-            # get next file from iterator
-            file = next(Globals.files_iterator)
-
-            # If 'Apply metadata from json' checkbutton is checked: check if ID at current index is in the loaded
-            # metadata and apply it
-            while metadata_file_variable.get() == '1' and file['id'] in Globals.metadata_file:
-                apply_metadata(file['id'], Globals.metadata_file[file['id']])
-                file = next(Globals.files_iterator)
-
-            Globals.current_file = file
-
-            select_metadata_variable.set(f"Select metadata for: \"{file['originaltitle']}\" " +
-                                         f"({list(Globals.files.values()).index(file) + 1}/{len(Globals.files)})"
-                                         if len(Globals.files) > 1 else '')
-
-            # save previous artist and album before they get changed
-            previous_artist = artist_combobox.get()
-            previous_album = album_combobox.get()
-
-            if swap_variable.get() == '0':
-                artist_combobox['values'] = file['artist']
-                title_combobox['values'] = file['title']
-                artist_combobox.set(file['artist'][0])
-                title_combobox.set(file['title'][0])
-            else:
-                artist_combobox['values'] = file['title']
-                title_combobox['values'] = file['artist']
-                artist_combobox.set(file['title'][0])
-                title_combobox.set(file['artist'][0])
-
-            match metadata_mode.get():
-                case 'vgm' | 'album':
-                    match metadata_mode.get():
-                        # Album mode
-                        case 'album':
-                            if file['album']:
-                                album_combobox.set(file['album'][0])
-                            album_combobox['values'] = file['album']
-                            if file['track']:
-                                track_combobox.set(file['track'][0])
-                            track_combobox['values'] = file['track']
-
-                        # VGM mode
-                        case 'vgm':
-                            album_combobox.set(artist_combobox.get() + ' OST')
-                            album_combobox['values'] = [i + ' OST' for i in artist_combobox['values']]
-
-                            track_combobox.set('')
-                            track_combobox['values'] = []
-
-                    # apply previous artist and album
-                    if previous_artist:
-                        if keep_artist_variable.get() == '1':
-                            artist_combobox.set(previous_artist)
-                        artist_combobox['values'] += (previous_artist,)
-
-                    if previous_album:
-                        if keep_artist_variable.get() == '1':
-                            album_combobox.set(previous_album)
-                        album_combobox['values'] += (previous_album,)
-
-                # Classical mode
-                case 'classical':
-                    classical_type_combobox['values'] = file['type']
-                    classical_type_combobox.set(file['type'][0] if file['type'] else '')
-                    classical_number_combobox['values'] = file['number']
-                    classical_number_combobox.set(file['number'][0] if file['number'] else '')
-                    classical_key_combobox['values'] = file['key']
-                    classical_key_combobox.set(file['key'][0] if file['key'] else '')
-                    classical_work_combobox['values'] = file['work']
-                    classical_work_combobox.set(file['work'][0] if file['work'] else '')
-
-                    classical_comment_combobox['values'] = file['comment']
-                    classical_comment_combobox.set('')
-                    classical_cut_entry.delete(0, 'end')
-                    if file['id'] in Globals.metadata_file and 'cut' in Globals.metadata_file[file['id']]:
-                        classical_cut_entry.insert(0, Globals.metadata_file[file['id']]['cut'])
-
-                    if file['file']:
-                        title_combobox.set(file['title'][0])
-        except StopIteration:
-            reset()
-
     def apply_metadata(id, data):
         path = os.path.join('out', id + '.mp3')
         filename = os.path.join('out', safe_filename(f'{data["artist"]} - {data["title"]}.mp3'))
@@ -687,36 +607,21 @@ def main():
         # reset globals
         Globals.folder = ''
         Globals.files = {}
-        Globals.current_file = {}
         Globals.already_finished = {}
         Globals.dont_delete = []
 
-        # reset comboboxes
-        for c in [artist_combobox, title_combobox, album_combobox, track_combobox, classical_type_combobox,
-                  classical_number_combobox, classical_key_combobox, classical_work_combobox,
-                  classical_comment_combobox]:
-            c.set('')
-            c['values'] = []
-
         # reset widgets
-        disable_widgets([new_metadata_button])
+        disable_widgets([metadata_button])
         if Globals.metadata_widgets:
             Globals.metadata_widgets.reset()
+            Globals.metadata_widgets = None
         for w in Globals.metadata_names:
             w.grid_forget()
 
-        disable_widgets(metadata_widgets)
         enable_widgets(download_widgets)
         url_combobox.set('')
         progress_text.set('')
-        select_metadata_variable.set('')
         output_folder_variable.set('Folder: Default (click to open)')
-
-        # VGM mode
-        keep_artist_variable.set('0')
-
-        # Classical mode
-        classical_cut_entry.delete(0, 'end')
 
     # download mode dependent methods
     # download modes that download files (Download, Sync)
@@ -747,7 +652,7 @@ def main():
                     if video_id:
                         Globals.already_finished[video_id] = f
                 except IndexError:
-                    print(f'{f} has no TPUB-Frame set')
+                    print(f'[Debug] {f} has no TPUB-Frame set')
 
         # prevent windows sleep mode
         ctypes.windll.kernel32.SetThreadExecutionState(0x80000001)
@@ -867,19 +772,10 @@ def main():
             reset()
             return
 
-        # create iterator from files dict
-        Globals.files_iterator = iter(Globals.files.values())
-
-        update_combobox()
-        Globals.metadata_widgets = MetadataSelection(new_metadata_frame, list(Globals.files.values()),
-                                                     metadata_mode.get())
+        Globals.metadata_widgets = MetadataSelection(metadata_frame, list(Globals.files.values()), metadata_mode.get())
         update_metadata_mode()
 
-        # start metadata selection if not all metadata has been already set (reset in update_combobox hasn't been
-        # executed yet)
-        if Globals.current_file:
-            enable_widgets([new_metadata_button])
-            enable_widgets(metadata_widgets)
+        enable_widgets([metadata_button])
 
     # download modes that download metadata (Calculate length, Download metadata, Backup playlist)
     def download_metadata():
@@ -1058,49 +954,7 @@ def main():
         for w in widgets:
             w.state(['disabled'])
 
-    # button click methods
-    def apply_metadata_once():
-        file = Globals.current_file
-        file['artist'] = artist_combobox.get()
-        file['title'] = title_combobox.get()
-        file['album'] = album_combobox.get()
-        file['track'] = track_combobox.get()
-        if metadata_mode.get() == 'classical' and classical_cut_entry.get().strip():
-            file['cut'] = classical_cut_entry.get()
-        apply_metadata(file['id'], file)
-        update_combobox()
-
-    def apply_metadata_auto():
-        previous_artist = artist_combobox.get()
-        previous_album = album_combobox.get()
-        f = Globals.current_file
-
-        try:
-            while True:
-                f['artist'] = f['artist'][0] if keep_artist_variable.get() == '0' else previous_artist
-                f['title'] = f['title'][0]
-                if metadata_mode.get() == 'vgm':
-                    f['album'] = f['artist'] + ' OST' if keep_artist_variable.get() == '0' else previous_album
-                elif keep_artist_variable.get() == '1':
-                    f['album'] = previous_album
-                else:
-                    f['album'] = f['album'][0] if f['album'] else ''
-                f['track'] = f['track'][0] if f['track'] else ''
-                apply_metadata(f['id'], f)
-                f = next(Globals.files_iterator)
-        except StopIteration:
-            reset()
-
-    def apply_metadata_file():
-        if metadata_file_variable.get() == '1' and Globals.current_file and \
-                Globals.current_file['id'] in Globals.metadata_file:
-            id = Globals.current_file['id']
-            data = Globals.metadata_file[id]
-
-            apply_metadata(id, data)
-            update_combobox()
-
-    def new_apply_metadata():
+    def apply_all_metadata():
         for i, file in enumerate(Globals.metadata_widgets.data):
             file['artist'] = Globals.metadata_widgets.rows[i][1].get()
             file['title'] = Globals.metadata_widgets.rows[i][4].get()
@@ -1116,7 +970,8 @@ def main():
                 file['cut'] = Globals.metadata_widgets.rows[i][14].get()
 
             apply_metadata(file['id'], file)
-            reset()
+
+        reset()
 
     def save_url():
         url = simpledialog.askstring(title='Save URL',
@@ -1136,25 +991,6 @@ def main():
             subprocess.run(f'explorer.exe "{folder}"')
         else:
             subprocess.run('explorer.exe out')
-
-    def open_url(event):
-        if Globals.current_file:
-            webbrowser.open_new('https://youtu.be/' + Globals.current_file['id'])
-
-    def swap():
-        temp = artist_combobox.get()
-        artist_combobox.set(title_combobox.get())
-        title_combobox.set(temp)
-
-        temp = artist_combobox['values']
-        artist_combobox['values'] = title_combobox['values']
-        title_combobox['values'] = temp
-
-    def capitalize_artist():
-        artist_combobox.set(artist_combobox.get().title())
-
-    def capitalize_title():
-        title_combobox.set(title_combobox.get().title())
 
     # menu click methods
     def update_download_mode():
@@ -1185,58 +1021,14 @@ def main():
                 download_button['command'] = download_metadata
 
     def update_metadata_mode():
-        for w in metadata_mode_widgets:
-            w.grid_forget()
-
-        artist_variable.set('Select the artist:')
-        match metadata_mode.get():
-            case 'album' | 'vgm':
-                album_label.grid(row=10, column=0, columnspan=width // 6, sticky='W', pady=2)
-                album_combobox.grid(row=10, column=width // 6, columnspan=4, sticky='EW')
-                track_label.grid(row=11, column=0, columnspan=width // 6, sticky='W', pady=2)
-                track_combobox.grid(row=11, column=width // 6, columnspan=4, sticky='EW')
-                keep_artist_checkbutton.grid(row=12, column=0, sticky='W')
-
-                if file := Globals.current_file:
-                    try:
-                        match metadata_mode.get():
-                            case 'album':
-                                album_combobox.set(file['album'][0])
-                                album_combobox['values'] = file['album']
-                                track_combobox.set(file['track'][0])
-                                track_combobox['values'] = file['track']
-                            case 'vgm':
-                                album_combobox.set(artist_combobox.get() + ' OST')
-                                album_combobox['values'] = [i + ' OST' for i in artist_combobox['values']]
-                    except IndexError:
-                        pass
-
-            case 'classical':
-                artist_variable.set('Select the composer:')
-
-                classical_type_label.grid(row=10, column=0, columnspan=width // 6, sticky='W', pady=2)
-                classical_type_combobox.grid(row=10, column=width // 6, columnspan=4, sticky='EW')
-                classical_number_label.grid(row=11, column=0, columnspan=width // 6, sticky='W', pady=2)
-                classical_number_combobox.grid(row=11, column=width // 6, columnspan=4, sticky='EW')
-                classical_key_label.grid(row=12, column=0, columnspan=width // 6, sticky='W', pady=2)
-                classical_key_combobox.grid(row=12, column=width // 6, columnspan=4, sticky='EW')
-                classical_work_label.grid(row=13, column=0, columnspan=width // 6, sticky='W', pady=2)
-                classical_work_combobox.grid(row=13, column=width // 6, columnspan=4, sticky='EW')
-                classical_comment_label.grid(row=14, column=0, columnspan=width // 6, sticky='W', pady=2)
-                classical_comment_combobox.grid(row=14, column=width // 6, columnspan=4, sticky='EW')
-                classical_cut_label.grid(row=15, column=0, columnspan=width // 6, sticky='W', pady=2)
-                classical_cut_entry.grid(row=15, column=width // 6, columnspan=4, sticky='EW')
-
-        # new
-        for i, name in enumerate(Globals.metadata_names):
-            name.grid_forget()
-            if i < 6 or (
-                    metadata_mode.get() == 'album' or metadata_mode.get() == 'vgm') and i < 9 or metadata_mode.get() == 'classical' and i >= 9:
-                name.grid(row=0, column=i)
-                name.bind('<MouseWheel>', scroll)
-
-
         if Globals.metadata_widgets:
+            for i, name in enumerate(Globals.metadata_names):
+                name.grid_forget()
+                if i < 6 or (metadata_mode.get() == 'album' or metadata_mode.get() == 'vgm') \
+                        and i < 9 or metadata_mode.get() == 'classical' and i >= 9:
+                    name.grid(row=0, column=i)
+                    name.bind('<MouseWheel>', scroll)
+
             Globals.metadata_widgets.mode = metadata_mode.get()
             Globals.metadata_widgets.grid()
 
@@ -1255,46 +1047,11 @@ def main():
             metadata_mode.set(Globals.saved_urls[url]['metadata_mode'])
             update_metadata_mode()
 
-    def combobox_write(*args):
-        match metadata_mode.get():
-            case 'vgm':
-                artist: str = artist_combobox.get()
-                album_combobox.set(artist if artist.endswith(' OST') else artist + ' OST')
-            case 'classical':
-                # put the values from the comboboxes together to make the title
-                artist: str = artist_combobox.get()
-                type: str = classical_type_combobox.get()
-                number: str = classical_number_combobox.get()
-                key: str = classical_key_combobox.get()
-                work: str = classical_work_combobox.get()
-                comment: str = classical_comment_combobox.get()
-
-                real_key: str = ''
-                real_work: str = ''
-                if key:
-                    real_key = key[0].upper() + ('' if len(key) == 1 else (' Flat' if key[1] == 'b' else ' Sharp')) + \
-                               (' Major' if key[0].isupper() else ' Minor')
-
-                if work:
-                    formats: dict[str, str] = Globals.classical_work_format_special
-                    work_numbers: list[str] = work.split(' ')
-                    real_work = ((formats[artist] + ' ') if artist in formats else 'Op. ') + work_numbers[0] + \
-                                (((' No. ' if artist != 'Haydn' else ':') + work_numbers[1])
-                                 if len(work_numbers) > 1 and work_numbers[1] else '') + \
-                                ((': ' + ' '.join(work_numbers[2:])) if len(work_numbers) > 2 else '')
-
-                title_combobox.set("{0}{1}{2}{3}{4}".format(type,
-                                                            (' No. ' + number) if number else '',
-                                                            (' in ' + real_key) if real_key else '',
-                                                            (', ' + real_work) if real_work else '',
-                                                            ' (' + comment + ')' if comment else ''
-                                                            ))
-
     # track change of window size
     def size_changed(event):
         try:
-            error_text['height'] = (root.winfo_height() - download_frame.winfo_height() - new_metadata_labelframe.winfo_height()
-                                    - 80) // 16
+            error_text['height'] = (root.winfo_height() - download_frame.winfo_height() -
+                                    metadata_labelframe.winfo_height() - 80) // 16
         except NameError:
             pass
 
@@ -1315,47 +1072,8 @@ def main():
     root.protocol("WM_DELETE_WINDOW", on_exit)
 
     download_frame = ttk.Labelframe(root, padding=(3, 10, 12, 12), borderwidth=5, relief='ridge', text='Download')
-    metadata_frame = ttk.Labelframe(root, padding=(3, 10, 12, 12), borderwidth=5, relief='ridge', text='Metadata')
 
-    new_metadata_labelframe = ttk.Labelframe(root, padding=(3, 10, 12, 12), borderwidth=5, relief='ridge',
-                                             text='Metadata')
-
-    metadata_canvas = Canvas(new_metadata_labelframe)
-    metadata_scrollbar = ttk.Scrollbar(new_metadata_labelframe, orient=VERTICAL, command=metadata_canvas.yview)
-    metadata_canvas.configure(yscrollcommand=metadata_scrollbar.set)
-    metadata_canvas.bind('<MouseWheel>', scroll)
-    new_metadata_frame = ttk.Frame(metadata_canvas)
-    new_metadata_frame.bind('<Configure>',
-                            lambda e: metadata_canvas.configure(scrollregion=metadata_canvas.bbox("all")))
-    metadata_canvas.create_window((0, 0), window=new_metadata_frame, anchor="nw")
-
-    new_metadata_labelframe.grid(row=2, column=0, sticky='NEW', padx=5, pady=5)
-
-    metadata_canvas.pack(side=LEFT, expand=True, fill=X)
-    metadata_scrollbar.pack(side=RIGHT, fill=Y)
-
-    Globals.metadata_names = [ttk.Label(new_metadata_frame, text='Video title'),
-                              ttk.Label(new_metadata_frame, text='Artist'),
-                              ttk.Label(new_metadata_frame, text=''),
-                              ttk.Label(new_metadata_frame, text='Swap'),
-                              ttk.Label(new_metadata_frame, text='Title'),
-                              ttk.Label(new_metadata_frame, text=''),
-
-                              ttk.Label(new_metadata_frame, text='Album'),
-                              ttk.Label(new_metadata_frame, text='Track'),
-                              ttk.Label(new_metadata_frame, text='Previous'),
-
-                              ttk.Label(new_metadata_frame, text='Type'),
-                              ttk.Label(new_metadata_frame, text='Number'),
-                              ttk.Label(new_metadata_frame, text='Key'),
-                              ttk.Label(new_metadata_frame, text='Work'),
-                              ttk.Label(new_metadata_frame, text='Comment'),
-                              ttk.Label(new_metadata_frame, text='Cut')
-                              ]
-
-    new_metadata_button = ttk.Button(new_metadata_labelframe, text='Apply metadata', command=new_apply_metadata,
-                                     state='disabled')
-    new_metadata_button.pack(before=metadata_canvas, side=BOTTOM, anchor='w')
+    metadata_labelframe = ttk.Labelframe(root, padding=(3, 10, 12, 12), borderwidth=5, relief='ridge', text='Metadata')
 
     error_frame = ttk.Labelframe(root, padding=(3, 10, 12, 12), borderwidth=5, relief='ridge', text='Info and Errors')
 
@@ -1377,20 +1095,6 @@ def main():
     sync_ask_delete.set('1')
     progress_text = StringVar()
     progress_bar = DoubleVar()
-    select_metadata_variable = StringVar()
-    metadata_file_variable = StringVar()
-    swap_variable = StringVar()
-    swap_variable.set('0')
-    artist_combobox_content = StringVar()
-
-    classical_type_combobox_content = StringVar()
-    classical_number_combobox_content = StringVar()
-    classical_key_combobox_content = StringVar()
-    classical_work_combobox_content = StringVar()
-    classical_comment_combobox_content = StringVar()
-
-    keep_artist_variable = StringVar()
-    keep_artist_variable.set('0')
 
     # menu
     menubar = Menu(root)
@@ -1423,6 +1127,7 @@ def main():
     menu_debug = Menu(menubar)
     menubar.add_cascade(menu=menu_debug, label='Debug')
     menu_debug.add_checkbutton(label='Show debug messages', variable=debug, onvalue='1', offvalue='0')
+    menu_debug.add_command(label='Reset', command=reset)
 
     # widgets
     # download widgets
@@ -1445,52 +1150,34 @@ def main():
     download_mode_widgets = [sync_ask_delete_checkbutton]
 
     # metadata widgets
-    select_metadata_label = ttk.Label(metadata_frame, text='', textvariable=select_metadata_variable, cursor='hand2')
-    artist_label = ttk.Label(metadata_frame, textvariable=artist_variable)
-    title_label = ttk.Label(metadata_frame, text='Select the title:')
-    artist_combobox = ttk.Combobox(metadata_frame, textvariable=artist_combobox_content)
-    swap_checkbutton = ttk.Checkbutton(metadata_frame, text='Swap title/artist', command=swap, variable=swap_variable)
-    title_combobox = ttk.Combobox(metadata_frame)
-    capitalize_artist_button = ttk.Button(metadata_frame, text='Normal capitalization', command=capitalize_artist,
-                                          state='disabled')
-    capitalize_title_button = ttk.Button(metadata_frame, text='Normal capitalization', command=capitalize_title,
-                                         state='disabled')
-    metadata_auto_button = ttk.Button(metadata_frame, text='Apply all metadata automatically',
-                                      command=apply_metadata_auto, state='disabled')
-    metadata_button = ttk.Button(metadata_frame, text='Apply metadata', command=apply_metadata_once, state='disabled')
-    metadata_file_checkbutton = ttk.Checkbutton(metadata_frame, text='Apply metadata from metadata.json automatically',
-                                                variable=metadata_file_variable, command=apply_metadata_file)
+    metadata_canvas = Canvas(metadata_labelframe)
+    metadata_scrollbar = ttk.Scrollbar(metadata_labelframe, orient=VERTICAL, command=metadata_canvas.yview)
+    metadata_frame = ttk.Frame(metadata_canvas)
 
-    # metadata widgets that get enabled/disabled
-    metadata_widgets = [capitalize_artist_button, capitalize_title_button, metadata_auto_button, metadata_button]
+    metadata_canvas.configure(yscrollcommand=metadata_scrollbar.set)
+    metadata_canvas.create_window((0, 0), window=metadata_frame, anchor="nw")
 
-    # metadata mode dependent widgets
-    # vgm / album mode
-    album_label = ttk.Label(metadata_frame, text='Select the album:')
-    album_combobox = ttk.Combobox(metadata_frame)
-    track_label = ttk.Label(metadata_frame, text='Select the track number:')
-    track_combobox = ttk.Combobox(metadata_frame)
-    keep_artist_checkbutton = ttk.Checkbutton(metadata_frame, text='Keep artist/album of previous video',
-                                              variable=keep_artist_variable)
-    # classical mode
-    classical_type_label = ttk.Label(metadata_frame, text='Type:')
-    classical_type_combobox = ttk.Combobox(metadata_frame, textvariable=classical_type_combobox_content)
-    classical_number_label = ttk.Label(metadata_frame, text='Number:')
-    classical_number_combobox = ttk.Combobox(metadata_frame, textvariable=classical_number_combobox_content)
-    classical_key_label = ttk.Label(metadata_frame, text='Key:')
-    classical_key_combobox = ttk.Combobox(metadata_frame, textvariable=classical_key_combobox_content)
-    classical_work_label = ttk.Label(metadata_frame, text='Work:')
-    classical_work_combobox = ttk.Combobox(metadata_frame, textvariable=classical_work_combobox_content)
-    classical_comment_label = ttk.Label(metadata_frame, text='Comments:')
-    classical_comment_combobox = ttk.Combobox(metadata_frame, textvariable=classical_comment_combobox_content)
-    classical_cut_label = ttk.Label(metadata_frame, text='Cut:')
-    classical_cut_entry = ttk.Entry(metadata_frame)
+    Globals.metadata_names = [ttk.Label(metadata_frame, text='Video title'),
+                              ttk.Label(metadata_frame, text='Artist'),
+                              ttk.Label(metadata_frame, text=''),
+                              ttk.Label(metadata_frame, text='Swap'),
+                              ttk.Label(metadata_frame, text='Title'),
+                              ttk.Label(metadata_frame, text=''),
 
-    metadata_mode_widgets = [album_label, album_combobox, track_label, track_combobox, keep_artist_checkbutton,
-                             classical_type_label, classical_type_combobox, classical_number_label,
-                             classical_number_combobox, classical_key_label, classical_key_combobox,
-                             classical_work_label, classical_work_combobox, classical_comment_label,
-                             classical_comment_combobox, classical_cut_label, classical_cut_entry]
+                              ttk.Label(metadata_frame, text='Album'),
+                              ttk.Label(metadata_frame, text='Track'),
+                              ttk.Label(metadata_frame, text='Previous'),
+
+                              ttk.Label(metadata_frame, text='Type'),
+                              ttk.Label(metadata_frame, text='Number'),
+                              ttk.Label(metadata_frame, text='Key'),
+                              ttk.Label(metadata_frame, text='Work'),
+                              ttk.Label(metadata_frame, text='Comment'),
+                              ttk.Label(metadata_frame, text='Cut')
+                              ]
+
+    metadata_button = ttk.Button(metadata_labelframe, text='Apply metadata', command=apply_all_metadata,
+                                 state='disabled')
 
     # error message widgets
     error_text = ScrolledText(error_frame, wrap=tkinter.WORD, height=10, state='disabled')
@@ -1498,13 +1185,9 @@ def main():
     # widget events
     url_variable.trace_add('write', url_combobox_write)
     output_folder_label.bind('<Button-1>', open_output_folder)
-    select_metadata_label.bind('<Button-1>', open_url)
-    artist_combobox_content.trace_add('write', combobox_write)
-    classical_type_combobox_content.trace_add('write', combobox_write)
-    classical_number_combobox_content.trace_add('write', combobox_write)
-    classical_key_combobox_content.trace_add('write', combobox_write)
-    classical_work_combobox_content.trace_add('write', combobox_write)
-    classical_comment_combobox_content.trace_add('write', combobox_write)
+
+    metadata_canvas.bind('<MouseWheel>', scroll)
+    metadata_frame.bind('<Configure>', lambda e: metadata_canvas.configure(scrollregion=metadata_canvas.bbox("all")))
 
     # grid (rows: 0-9 before mode dependent widgets, 10-19 mode dependent widgets, 20-29 after mode dependent widgets)
     width = 6  # number of columns
@@ -1519,27 +1202,19 @@ def main():
     download_progress.grid(row=21, column=0, columnspan=width, pady=5, sticky='EW')
     progress_label.grid(row=22, column=0, columnspan=width)
 
-    metadata_frame.grid(row=1, column=0, sticky='NEW', padx=5, pady=5)
-    select_metadata_label.grid(row=0, column=0, columnspan=width, sticky='W')
-    artist_label.grid(row=1, column=0, columnspan=width // 6, sticky='W')
-    artist_combobox.grid(row=1, column=width // 6, columnspan=4, sticky='EW')
-    capitalize_artist_button.grid(row=1, column=5, padx=5, sticky='W')
-    swap_checkbutton.grid(row=2, column=width // 6, columnspan=5, sticky='W')
-    title_label.grid(row=3, column=0, columnspan=width // 6, sticky='W')
-    title_combobox.grid(row=3, column=width // 6, columnspan=4, sticky='EW')
-    capitalize_title_button.grid(row=3, column=5, padx=5, sticky='W')
-    metadata_file_checkbutton.grid(row=20, column=0, pady=(5, 0), sticky='W')
-    metadata_auto_button.grid(row=21, column=0, columnspan=1, pady=(5, 0), sticky='W')
-    metadata_button.grid(row=21, column=width // 6, columnspan=4, pady=(5, 0), sticky='W')
+    metadata_labelframe.grid(row=1, column=0, sticky='NEW', padx=5, pady=5)
+    metadata_canvas.pack(side=LEFT, expand=True, fill=X)
+    metadata_scrollbar.pack(side=RIGHT, fill=Y)
+    metadata_button.pack(before=metadata_canvas, side=BOTTOM, anchor='w')
 
-    error_frame.grid(row=3, column=0, sticky='NEW', padx=5, pady=5)
+    error_frame.grid(row=2, column=0, sticky='NEW', padx=5, pady=5)
     error_text.grid(row=0, column=0, columnspan=width, sticky='EW', pady=(5, 0))
 
     url_combobox.focus()
 
     root.columnconfigure(0, weight=1)
 
-    for f in [download_frame, metadata_frame, new_metadata_labelframe, error_frame]:
+    for f in [download_frame, metadata_labelframe, error_frame]:
         for i in range(6):
             f.columnconfigure(i, weight=1)
 
