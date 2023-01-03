@@ -27,7 +27,7 @@ os.chdir(os.path.dirname(os.path.realpath(__file__)))
 
 class Globals:
     folder: str = ''  # folder to sync with
-    files: list[dict[str, Union[str, list[str]]]] = []
+    files: dict[str, dict[str, Union[str, list[str]]]] = {}
     files_iterator = None
     current_file: dict[str, Union[str, list[str]]] = {}
     # dict of IDs and filenames of videos that are already present in the output folder and where metadata has been
@@ -39,7 +39,9 @@ class Globals:
     start = datetime.now()
     metadata_file: dict[str, dict[str, str]] = {}
     saved_urls: dict[str, dict[str, str]] = {}
-    num_threads: int = 128
+    num_threads: int = 100
+    metadata_widgets = None
+    metadata_names: list[ttk.Widget] = []
 
     try:
         with open('metadata.json', 'r', encoding='utf-8') as f:
@@ -114,6 +116,154 @@ class Globals:
         'Gymnopedie': 'Gymnopédie',
         'Ballett': 'Ballet'
     }
+
+
+class MetadataSelection:
+    def __init__(self, root: ttk.Widget, metadata: list[dict[str, str | list[str]]], mode: str):
+        self.rows = []
+        self.vars: list[list[StringVar]] = []
+        self.data = metadata
+        self.mode: str = mode
+        for i, f in enumerate(metadata):
+            self.vars.append([StringVar() for _ in range(6)])
+            self.rows.append([ttk.Label(root, text=f['originaltitle'], width=50),
+                              ttk.Combobox(root, values=f['artist'], textvariable=self.vars[i][0], width=40),
+                              ttk.Checkbutton(root, command=lambda row=i: self.capitalize(row, 2)),
+                              ttk.Checkbutton(root, command=lambda row=i: self.new_swap(row)),
+                              ttk.Combobox(root, values=f['title'], width=50),
+                              ttk.Checkbutton(root, command=lambda row=i: self.capitalize(row, 5)),
+
+                              ttk.Combobox(root, values=f['album'], width=30),
+                              ttk.Combobox(root, values=f['track'], width=5),
+                              ttk.Checkbutton(root, command=lambda row=i: self.previous_artist_album(row)),
+
+                              ttk.Combobox(root, values=f['type'], textvariable=self.vars[i][1], width=20),
+                              ttk.Combobox(root, values=f['number'], textvariable=self.vars[i][2], width=5),
+                              ttk.Combobox(root, values=f['key'], textvariable=self.vars[i][3], width=5),
+                              ttk.Combobox(root, values=f['work'], textvariable=self.vars[i][4], width=20),
+                              ttk.Combobox(root, values=f['comment'], textvariable=self.vars[i][5], width=20),
+                              ttk.Entry(root, width=30)
+                              ])
+
+            self.rows[i][0].bind('<Button-1>', lambda e, id=f['id']: webbrowser.open_new(f'https://youtu.be/{id}'))
+            self.rows[i][1].set(f['artist'][0])
+            self.rows[i][2].state(['!alternate'])
+            self.rows[i][2].bind('<Shift-Button-1>', lambda e, row=i: self.shift(row, 2))
+            self.rows[i][3].state(['!alternate'])
+            self.rows[i][3].bind('<Shift-Button-1>', lambda e, row=i: self.shift(row, 3))
+            self.rows[i][4].set(f['title'][0])
+            self.rows[i][5].state(['!alternate'])
+            self.rows[i][5].bind('<Shift-Button-1>', lambda e, row=i: self.shift(row, 5))
+
+            self.rows[i][6].set(f['album'][0] if f['album'] else '')
+            self.rows[i][7].set(f['track'][0] if f['track'] else '')
+            self.rows[i][8].state(['!alternate'])
+            self.rows[i][8].bind('<Shift-Button-1>', lambda e, row=i: self.shift(row, 8))
+
+            self.rows[i][9].set(f['type'][0] if f['type'] else '')
+            self.rows[i][10].set(f['number'][0] if f['number'] else '')
+            self.rows[i][11].set(f['key'][0] if f['key'] else '')
+            self.rows[i][12].set(f['work'][0] if f['work'] else '')
+            self.rows[i][13].set(f['comment'][0] if f['comment'] else '')
+
+            self.rows[i][14].insert(0, Globals.metadata_file[f['id']]['cut'] if f[
+                                                                                    'id'] in Globals.metadata_file and 'cut' in
+                                                                                Globals.metadata_file[f['id']] else '')
+
+            for j in range(6):
+                self.vars[i][j].trace_add('write', lambda _a, _b, _c, row=i: self.combobox_write(row))
+
+    def capitalize(self, row, column):
+        self.rows[row][column - 1].set(self.rows[row][column - 1].get().title())
+
+    def new_swap(self, row):
+        temp = self.rows[row][1].get()
+        self.rows[row][1].set(self.rows[row][4].get())
+        self.rows[row][4].set(temp)
+
+        self.rows[row][1]['values'], self.rows[row][4]['values'] = \
+            self.rows[row][4]['values'], self.rows[row][1]['values']
+
+    def shift(self, row, column):
+        if self.rows[row][column].instate(['!selected']):
+            first_tick = row
+            while not self.rows[first_tick][column].instate(['selected']) and row >= 1:
+                first_tick -= 1
+
+            for i in range(first_tick + 1, row):
+                self.rows[i][column].state(['selected'])
+
+                if column in [2, 5]:
+                    self.capitalize(i, column)
+                elif column == 3:
+                    self.new_swap(i)
+                elif column == 8:
+                    self.previous_artist_album(i)
+
+    def grid(self):
+        for i, l in enumerate(self.rows):
+            for j, w in enumerate(l):
+                w.grid_forget()
+                if j < 6 or (
+                        self.mode == 'album' or self.mode == 'vgm') and j < 9 or self.mode == 'classical' and j >= 9:
+                    w.grid(row=i + 1, column=j, sticky='W', padx=1, pady=1)
+
+            current = list(Globals.files.values())[i]
+            if self.mode == 'album':
+                self.rows[i][6].set(current['album'][0] if current['album'] else '')
+                self.rows[i][6]['values'] = current['album']
+
+                self.rows[i][7].set(current['track'][0] if current['track'] else '')
+                self.rows[i][7]['values'] = current['track']
+            elif self.mode == 'vgm':
+                self.rows[i][6].set(l[1].get() + ' OST')
+                self.rows[i][6]['values'] = [i + ' OST' for i in l[1]['values']]
+
+                self.rows[i][7].set('')
+                self.rows[i][7]['values'] = []
+
+    def combobox_write(self, row):
+        if self.mode == 'vgm':
+            artist: str = self.rows[row][1].get()
+            self.rows[row][6].set(artist if artist.endswith(' OST') else artist + ' OST')
+        elif self.mode == 'classical':
+            artist: str = self.rows[row][1].get()
+            type: str = self.rows[row][9].get()
+            number: str = self.rows[row][10].get()
+            key: str = self.rows[row][11].get()
+            work: str = self.rows[row][12].get()
+            comment: str = self.rows[row][13].get()
+
+            real_key: str = ''
+            real_work: str = ''
+            if key:
+                real_key = key[0].upper() + ('' if len(key) == 1 else (' Flat' if key[1] == 'b' else ' Sharp')) + \
+                           (' Major' if key[0].isupper() else ' Minor')
+
+            if work:
+                formats: dict[str, str] = Globals.classical_work_format_special
+                work_numbers: list[str] = work.split(' ')
+                real_work = ((formats[artist] + ' ') if artist in formats else 'Op. ') + work_numbers[0] + \
+                            (((' No. ' if artist != 'Haydn' else ':') + work_numbers[1])
+                             if len(work_numbers) > 1 and work_numbers[1] else '') + \
+                            ((': ' + ' '.join(work_numbers[2:])) if len(work_numbers) > 2 else '')
+
+            self.rows[row][4].set("{0}{1}{2}{3}{4}".format(type,
+                                                           (' No. ' + number) if number else '',
+                                                           (' in ' + real_key) if real_key else '',
+                                                           (', ' + real_work) if real_work else '',
+                                                           ' (' + comment + ')' if comment else ''
+                                                           ))
+
+    def previous_artist_album(self, row):
+        if row > 0:
+            self.rows[row][1].set(self.rows[row - 1][1].get())
+            self.rows[row][6].set(self.rows[row - 1][6].get())
+
+    def reset(self):
+        for i, l in enumerate(self.rows):
+            for j, w in enumerate(l):
+                w.grid_forget()
 
 
 # remove characters that are not allowed in filenames (by windows)
@@ -321,13 +471,9 @@ def main():
                     work_choices.append(work)
 
         if 'playlist' in metadata and metadata['playlist']:
-            choices['playlist'] = metadata['playlist']
             album_choices.append(metadata['playlist'])
         if 'playlist_index' in metadata and metadata['playlist_index']:
-            choices['playlist_index'] = metadata['playlist_index']
             track_choices.append(metadata['playlist_index'])
-        if 'n_entries' in metadata and metadata['n_entries']:
-            choices['playlist_length'] = metadata['n_entries']
 
         # remove empty and duplicate list entries
         choices['title'] = list(dict.fromkeys(filter(None, title_choices)))
@@ -356,13 +502,13 @@ def main():
 
             Globals.current_file = file
 
-            select_metadata_variable.set(f"Select metadata for: \"{file['originaltitle']}\" "
-                                         f"({Globals.files.index(file) + 1}/{len(Globals.files)})")
+            select_metadata_variable.set(f"Select metadata for: \"{file['originaltitle']}\" " +
+                                         f"({list(Globals.files.values()).index(file) + 1}/{len(Globals.files)})"
+                                         if len(Globals.files) > 1 else '')
 
             # save previous artist and album before they get changed
-            if metadata_mode.get() == 'vgm' or metadata_mode.get() == 'album':
-                previous_artist = artist_combobox.get()
-                previous_album = album_combobox.get()
+            previous_artist = artist_combobox.get()
+            previous_album = album_combobox.get()
 
             if swap_variable.get() == '0':
                 artist_combobox['values'] = file['artist']
@@ -375,54 +521,56 @@ def main():
                 artist_combobox.set(file['title'][0])
                 title_combobox.set(file['artist'][0])
 
-            if metadata_mode.get() == 'vgm' or metadata_mode.get() == 'album':
-                # Album mode
-                if metadata_mode.get() == 'album':
-                    if file['album']:
-                        album_combobox.set(file['album'][0])
-                    album_combobox['values'] = file['album']
-                    if file['track']:
-                        track_combobox.set(file['track'][0])
-                    track_combobox['values'] = file['track']
+            match metadata_mode.get():
+                case 'vgm' | 'album':
+                    match metadata_mode.get():
+                        # Album mode
+                        case 'album':
+                            if file['album']:
+                                album_combobox.set(file['album'][0])
+                            album_combobox['values'] = file['album']
+                            if file['track']:
+                                track_combobox.set(file['track'][0])
+                            track_combobox['values'] = file['track']
 
-                # VGM mode
-                if metadata_mode.get() == 'vgm':
-                    album_combobox.set(artist_combobox.get() + ' OST')
-                    album_combobox['values'] = [i + ' OST' for i in artist_combobox['values']]
+                        # VGM mode
+                        case 'vgm':
+                            album_combobox.set(artist_combobox.get() + ' OST')
+                            album_combobox['values'] = [i + ' OST' for i in artist_combobox['values']]
 
-                    track_combobox.set('')
-                    track_combobox['values'] = []
+                            track_combobox.set('')
+                            track_combobox['values'] = []
 
-                # apply previous artist and album
-                if previous_artist:
-                    if keep_artist_variable.get() == '1':
-                        artist_combobox.set(previous_artist)
-                    artist_combobox['values'] += (previous_artist,)
+                    # apply previous artist and album
+                    if previous_artist:
+                        if keep_artist_variable.get() == '1':
+                            artist_combobox.set(previous_artist)
+                        artist_combobox['values'] += (previous_artist,)
 
-                if previous_album:
-                    if keep_artist_variable.get() == '1':
-                        album_combobox.set(previous_album)
-                    album_combobox['values'] += (previous_album,)
+                    if previous_album:
+                        if keep_artist_variable.get() == '1':
+                            album_combobox.set(previous_album)
+                        album_combobox['values'] += (previous_album,)
 
-            # Classical mode
-            if metadata_mode.get() == 'classical':
-                classical_type_combobox['values'] = file['type']
-                classical_type_combobox.set(file['type'][0] if file['type'] else '')
-                classical_number_combobox['values'] = file['number']
-                classical_number_combobox.set(file['number'][0] if file['number'] else '')
-                classical_key_combobox['values'] = file['key']
-                classical_key_combobox.set(file['key'][0] if file['key'] else '')
-                classical_work_combobox['values'] = file['work']
-                classical_work_combobox.set(file['work'][0] if file['work'] else '')
+                # Classical mode
+                case 'classical':
+                    classical_type_combobox['values'] = file['type']
+                    classical_type_combobox.set(file['type'][0] if file['type'] else '')
+                    classical_number_combobox['values'] = file['number']
+                    classical_number_combobox.set(file['number'][0] if file['number'] else '')
+                    classical_key_combobox['values'] = file['key']
+                    classical_key_combobox.set(file['key'][0] if file['key'] else '')
+                    classical_work_combobox['values'] = file['work']
+                    classical_work_combobox.set(file['work'][0] if file['work'] else '')
 
-                classical_comment_combobox['values'] = file['comment']
-                classical_comment_combobox.set('')
-                classical_cut_entry.delete(0, 'end')
-                if file['id'] in Globals.metadata_file and 'cut' in Globals.metadata_file[file['id']]:
-                    classical_cut_entry.insert(0, Globals.metadata_file[file['id']]['cut'])
+                    classical_comment_combobox['values'] = file['comment']
+                    classical_comment_combobox.set('')
+                    classical_cut_entry.delete(0, 'end')
+                    if file['id'] in Globals.metadata_file and 'cut' in Globals.metadata_file[file['id']]:
+                        classical_cut_entry.insert(0, Globals.metadata_file[file['id']]['cut'])
 
-                if file['file']:
-                    title_combobox.set(file['title'][0])
+                    if file['file']:
+                        title_combobox.set(file['title'][0])
         except StopIteration:
             reset()
 
@@ -538,7 +686,7 @@ def main():
 
         # reset globals
         Globals.folder = ''
-        Globals.files = []
+        Globals.files = {}
         Globals.current_file = {}
         Globals.already_finished = {}
         Globals.dont_delete = []
@@ -551,6 +699,12 @@ def main():
             c['values'] = []
 
         # reset widgets
+        disable_widgets([new_metadata_button])
+        if Globals.metadata_widgets:
+            Globals.metadata_widgets.reset()
+        for w in Globals.metadata_names:
+            w.grid_forget()
+
         disable_widgets(metadata_widgets)
         enable_widgets(download_widgets)
         url_combobox.set('')
@@ -628,7 +782,10 @@ def main():
             def download_from_playlist(video_id):
                 try:
                     ydl.extract_info('https://youtu.be/' + video_id)
+                    # Globals.files[video_id]['album'].append(info['title'])
+                    # Globals.files[video_id]['track'].append(str(ids.index(video_id) + 1))
                 except youtube_dl.DownloadError as e:
+                    print_error('multithreading_download', e)
                     video_queue.put(video_id)
 
             def threading_worker():
@@ -662,10 +819,12 @@ def main():
                 progress = videos_done / playlist_length * 100
 
                 progress_bar.set(progress)
-                progress_text.set(f'Downloading playlist "{playlist_title}" with {active_threads} threads, '
-                                  f'{videos_done}/{playlist_length} ({round(progress, 1)}%) finished, '
+                progress_text.set(f'Downloading playlist "{playlist_title}" with {active_threads} thread' +
+                                  ('s' if active_threads != 1 else '') +
+                                  f', {videos_done}/{playlist_length} ({round(progress, 1)}%) finished, '
                                   f'{sec_to_min((datetime.now() - Globals.start).seconds)} elapsed')
-                sleep(1)
+                Tk.update(root)
+                sleep(0.1)
 
         # video download
         else:
@@ -703,19 +862,23 @@ def main():
         # reactivate windows sleep mode
         ctypes.windll.kernel32.SetThreadExecutionState(0x80000000)
 
-        # reset if the files list is empty (no metadata to be set)
+        # reset if the files dict is empty (no metadata to be set)
         if not Globals.files:
             reset()
             return
 
-        # create iterator from files list
-        Globals.files_iterator = iter(Globals.files)
+        # create iterator from files dict
+        Globals.files_iterator = iter(Globals.files.values())
 
         update_combobox()
+        Globals.metadata_widgets = MetadataSelection(new_metadata_frame, list(Globals.files.values()),
+                                                     metadata_mode.get())
+        update_metadata_mode()
 
         # start metadata selection if not all metadata has been already set (reset in update_combobox hasn't been
         # executed yet)
         if Globals.current_file:
+            enable_widgets([new_metadata_button])
             enable_widgets(metadata_widgets)
 
     # download modes that download metadata (Calculate length, Download metadata, Backup playlist)
@@ -741,98 +904,97 @@ def main():
 
         if info:
             # mode dependent actions
-            if mode == 'metadata':
-                try:
-                    with open(f'out/{safe_filename(info["title"])}.json', 'w') as f:
-                        json.dump(info, f)
-                except OSError as e:
-                    print_error('OS', e)
-                except Exception as e:
-                    print_error('download_metadata', e)
-
-            elif mode == 'length':
-                def convert_time(sec):
-                    h = int(sec // 3600)
-                    min = int(sec % 3600 // 60)
-                    seconds = int(sec % 60)
-                    return f'{h}:{"0" if min < 10 else ""}{min}:{"0" if seconds < 10 else ""}{seconds}'
-
-                try:
-                    playlist = info['webpage_url_basename'] == 'playlist'
-                    duration = sum([i['duration'] for i in list(info['entries'])]) if playlist else info['duration']
-
-                    print_error('length',
-                                f'Length of {"playlist" if playlist else "video"} "{info["title"]}": '
-                                f'{convert_time(duration)}')
-                except KeyError as e:
-                    print_error('length', e)
-
-            elif mode == 'backup':
-                # make backups folder if it doesn't exist
-                try:
-                    os.mkdir('backups')
-                except OSError:
-                    pass
-
-                # load old file if the playlist has been backed up before
-                old_file: dict[str, dict[str, str]] = {}
-                try:
-                    with open(f'backups/{info["id"]}.json', 'r') as f:
-                        old_file = json.load(f)
-                except FileNotFoundError:
-                    print_error('backup', 'No earlier backup found')
-
-                # extract title, uploader and description from info
-                new_file: dict[str, dict[str, str]] = {'title': info['title']}
-                if info['webpage_url_basename'] == 'playlist' and 'entries' in info and info['entries']:
-                    for entry in list(info['entries']):
-                        if entry:
-                            new_file[entry['id']] = {'title': entry['title'], 'uploader': entry['uploader']}
-
-                # compare both files if the playlist has been backed up before
-                if old_file:
-                    both = []
-                    for entry in old_file:
-                        if entry in new_file:
-                            both.append(entry)
-
-                    deleted = {k: v for (k, v) in old_file.items() if k not in both}
-                    added = {k: v for (k, v) in new_file.items() if k not in both}
-
-                    if added:
-                        print_error('backup', f'{len(added)} videos have been added to the playlist:')
-                        for entry in added:
-                            print_error('backup', f'{added[entry]["title"]}, {added[entry]["uploader"]}, {entry}')
-                        print_error('backup', '--------------------------------------------------------------------')
-
-                    if deleted:
-                        print_error('backup', f'{len(deleted)} videos have been deleted from the playlist:')
-                        for entry in deleted:
-                            print_error('backup', f'{deleted[entry]["title"]}, {deleted[entry]["uploader"]}, {entry}')
-                        print_error('backup', '--------------------------------------------------------------------')
-
-                    if not added and not deleted:
-                        print_error('backup', 'No changes found')
-
-                    # save changes to file
-                    changes = {'time': datetime.now().strftime('%Y-%m-%d, %H:%M:%S'), 'added': added,
-                               'deleted': deleted}
-                    changes_file = []
+            match mode:
+                case 'metadata':
                     try:
-                        with open(f'backups/{info["id"]}_changes.json', 'r') as f:
-                            changes_file = json.load(f)
-                    except FileNotFoundError as e:
-                        print_error('backup', e)
+                        with open(f'out/{safe_filename(info["title"])}.json', 'w') as f:
+                            json.dump(info, f)
+                    except OSError as e:
+                        print_error('OS', e)
+                    except Exception as e:
+                        print_error('download_metadata', e)
 
-                    with open(f'backups/{info["id"]}_changes.json', 'w') as f:
-                        changes_file.append(changes)
-                        json.dump(changes_file, f)
-                        print_error('backup', f'Changes have been saved to {f.name}')
+                case 'length':
+                    def convert_time(sec):
+                        h = int(sec // 3600)
+                        min = int(sec % 3600 // 60)
+                        seconds = int(sec % 60)
+                        return f'{h}:{"0" if min < 10 else ""}{min}:{"0" if seconds < 10 else ""}{seconds}'
 
-                # save new data to old file
-                with open(f'backups/{info["id"]}.json', 'w') as f:
-                    json.dump(new_file, f)
-                    print_error('backup', f'New playlist data has been backed up to {f.name}')
+                    try:
+                        playlist = info['webpage_url_basename'] == 'playlist'
+                        duration = sum([i['duration'] for i in list(info['entries'])]) if playlist else info['duration']
+
+                        print_error('length',
+                                    f'Length of {"playlist" if playlist else "video"} "{info["title"]}": '
+                                    f'{convert_time(duration)}')
+                    except KeyError as e:
+                        print_error('length', e)
+
+                case 'backup':
+                    # make backups folder if it doesn't exist
+                    try:
+                        os.mkdir('backups')
+                    except OSError:
+                        pass
+
+                    # load old file if the playlist has been backed up before
+                    old_file: dict[str, dict[str, str]] = {}
+                    try:
+                        with open(f'backups/{info["id"]}.json', 'r') as f:
+                            old_file = json.load(f)
+                    except FileNotFoundError:
+                        print_error('backup', 'No earlier backup found')
+
+                    # extract title, uploader and description from info
+                    new_file: dict[str, dict[str, str]] = {'title': info['title']}
+                    if info['webpage_url_basename'] == 'playlist' and 'entries' in info and info['entries']:
+                        for entry in list(info['entries']):
+                            if entry:
+                                new_file[entry['id']] = {'title': entry['title'], 'uploader': entry['uploader']}
+
+                    # compare both files if the playlist has been backed up before
+                    if old_file:
+                        both = [e for e in old_file if e in new_file]
+                        deleted = {k: v for (k, v) in old_file.items() if k not in both}
+                        added = {k: v for (k, v) in new_file.items() if k not in both}
+
+                        if added:
+                            print_error('backup', f'{len(added)} videos have been added to the playlist:')
+                            for entry in added:
+                                print_error('backup', f'{added[entry]["title"]}, {added[entry]["uploader"]}, {entry}')
+                            print_error('backup', '-------------------------------------------------------------------')
+
+                        if deleted:
+                            print_error('backup', f'{len(deleted)} videos have been deleted from the playlist:')
+                            for entry in deleted:
+                                print_error(
+                                    'backup', f'{deleted[entry]["title"]}, {deleted[entry]["uploader"]}, {entry}'
+                                )
+                            print_error('backup', '-------------------------------------------------------------------')
+
+                        if not added and not deleted:
+                            print_error('backup', 'No changes found')
+
+                        # save changes to file
+                        changes = {'time': datetime.now().strftime('%Y-%m-%d, %H:%M:%S'), 'added': added,
+                                   'deleted': deleted}
+                        changes_file = []
+                        try:
+                            with open(f'backups/{info["id"]}_changes.json', 'r') as f:
+                                changes_file = json.load(f)
+                        except FileNotFoundError as e:
+                            print_error('backup', 'No earlier changes found')
+
+                        with open(f'backups/{info["id"]}_changes.json', 'w') as f:
+                            changes_file.append(changes)
+                            json.dump(changes_file, f)
+                            print_error('backup', f'Changes have been saved to {f.name}')
+
+                    # save new data to old file
+                    with open(f'backups/{info["id"]}.json', 'w') as f:
+                        json.dump(new_file, f)
+                        print_error('backup', f'New playlist data has been backed up to {f.name}')
 
         reset()
 
@@ -862,31 +1024,25 @@ def main():
         Tk.update(root)
 
     def video_hook(d):
-        file = Globals.files[-1]
+        file = list(Globals.files.values())[-1]
 
-        if d['status'] == 'downloading':
-            update_progress_video(file, d)
-        if d['status'] == 'finished':
-            progress_text.set('Converting...')
+        match d['status']:
+            case 'downloading':
+                update_progress_video(file, d)
+            case 'finished':
+                progress_text.set('Converting...')
 
         Tk.update(root)
 
     def get_info_dict(info_dict):
-        # don't download and don't add to file list if file is already present and metadata has already been set,
+        # don't download and don't add to files dict if file is already present and metadata has already been set,
         # don't delete that file when syncing
         if info_dict['id'] in Globals.already_finished:
             Globals.dont_delete.append(Globals.already_finished[info_dict['id']])
             print_error('download', f"{info_dict['id']}: File with metadata already present")
             return f"{info_dict['id']}: File with metadata already present"
 
-        file: dict[str, Union[str, list[str]]] = generate_metadata_choices(info_dict)
-
-        # avoid duplicate entries with same ID
-        for f in Globals.files:
-            if f['id'] == info_dict['id']:
-                Globals.files.remove(f)
-
-        Globals.files.append(file)
+        Globals.files[info_dict['id']] = generate_metadata_choices(info_dict)
 
         # don't download if file is already present
         if os.path.isfile(os.path.join('out', info_dict['id'] + '.mp3')):
@@ -931,7 +1087,6 @@ def main():
                     f['album'] = f['album'][0] if f['album'] else ''
                 f['track'] = f['track'][0] if f['track'] else ''
                 apply_metadata(f['id'], f)
-
                 f = next(Globals.files_iterator)
         except StopIteration:
             reset()
@@ -944,6 +1099,24 @@ def main():
 
             apply_metadata(id, data)
             update_combobox()
+
+    def new_apply_metadata():
+        for i, file in enumerate(Globals.metadata_widgets.data):
+            file['artist'] = Globals.metadata_widgets.rows[i][1].get()
+            file['title'] = Globals.metadata_widgets.rows[i][4].get()
+
+            if metadata_mode.get() == 'album' or metadata_mode.get() == 'vgm':
+                file['album'] = Globals.metadata_widgets.rows[i][6].get()
+                file['track'] = Globals.metadata_widgets.rows[i][7].get()
+            else:
+                file['album'] = ''
+                file['track'] = ''
+
+            if metadata_mode.get() == 'classical' and Globals.metadata_widgets.rows[i][14].get().strip():
+                file['cut'] = Globals.metadata_widgets.rows[i][14].get()
+
+            apply_metadata(file['id'], file)
+            reset()
 
     def save_url():
         url = simpledialog.askstring(title='Save URL',
@@ -988,65 +1161,88 @@ def main():
         for w in download_mode_widgets:
             w.grid_forget()
 
-        if (mode := download_mode.get()) == 'download':
-            output_folder_button['text'] = 'Select output folder'
-            download_button['text'] = 'Download'
-            download_button['command'] = download
-            output_folder_button.grid(row=1, column=0, pady=(5, 0), sticky='W')
-            output_folder_label.grid(row=1, column=width // 6, columnspan=width - width // 6, sticky='W')
-        elif mode == 'sync':
-            output_folder_button['text'] = 'Select folder to sync with'
-            sync_ask_delete_checkbutton.grid(row=11, column=0, pady=(5, 0), sticky='W')
+        match download_mode.get():
+            case 'download':
+                output_folder_button['text'] = 'Select output folder'
+                download_button['text'] = 'Download'
+                download_button['command'] = download
+                output_folder_button.grid(row=1, column=0, pady=(5, 0), sticky='W')
+                output_folder_label.grid(row=1, column=width // 6, columnspan=width - width // 6, sticky='W')
+            case 'sync':
+                output_folder_button['text'] = 'Select folder to sync with'
+                sync_ask_delete_checkbutton.grid(row=11, column=0, pady=(5, 0), sticky='W')
 
-            download_button['text'] = 'Download and Sync'
-            download_button['command'] = download
-        elif mode == 'length':
-            download_button['text'] = 'Calculate length'
-            download_button['command'] = download_metadata
-        elif mode == 'metadata':
-            download_button['text'] = 'Download Metadata'
-            download_button['command'] = download_metadata
-        elif mode == 'backup':
-            download_button['text'] = 'Backup Playlist/Search for Changes'
-            download_button['command'] = download_metadata
+                download_button['text'] = 'Download and Sync'
+                download_button['command'] = download
+            case 'length':
+                download_button['text'] = 'Calculate length'
+                download_button['command'] = download_metadata
+            case 'metadata':
+                download_button['text'] = 'Download Metadata'
+                download_button['command'] = download_metadata
+            case 'backup':
+                download_button['text'] = 'Backup Playlist/Search for Changes'
+                download_button['command'] = download_metadata
 
     def update_metadata_mode():
         for w in metadata_mode_widgets:
             w.grid_forget()
 
         artist_variable.set('Select the artist:')
-        if (mode := metadata_mode.get()) == 'album' or mode == 'vgm':
-            album_label.grid(row=10, column=0, columnspan=width // 6, sticky='W', pady=2)
-            album_combobox.grid(row=10, column=width // 6, columnspan=4, sticky='EW')
-            track_label.grid(row=11, column=0, columnspan=width // 6, sticky='W', pady=2)
-            track_combobox.grid(row=11, column=width // 6, columnspan=4, sticky='EW')
-            keep_artist_checkbutton.grid(row=12, column=0, sticky='W')
+        match metadata_mode.get():
+            case 'album' | 'vgm':
+                album_label.grid(row=10, column=0, columnspan=width // 6, sticky='W', pady=2)
+                album_combobox.grid(row=10, column=width // 6, columnspan=4, sticky='EW')
+                track_label.grid(row=11, column=0, columnspan=width // 6, sticky='W', pady=2)
+                track_combobox.grid(row=11, column=width // 6, columnspan=4, sticky='EW')
+                keep_artist_checkbutton.grid(row=12, column=0, sticky='W')
 
-            if file := Globals.current_file:
-                if mode == 'album':
-                    album_combobox.set(file['album'][0])
-                    album_combobox['values'] = file['album']
-                    track_combobox.set(file['track'][0])
-                    track_combobox['values'] = file['track']
-                elif mode == 'vgm':
-                    album_combobox.set(artist_combobox.get() + ' OST')
-                    album_combobox['values'] = [i + ' OST' for i in artist_combobox['values']]
+                if file := Globals.current_file:
+                    try:
+                        match metadata_mode.get():
+                            case 'album':
+                                album_combobox.set(file['album'][0])
+                                album_combobox['values'] = file['album']
+                                track_combobox.set(file['track'][0])
+                                track_combobox['values'] = file['track']
+                            case 'vgm':
+                                album_combobox.set(artist_combobox.get() + ' OST')
+                                album_combobox['values'] = [i + ' OST' for i in artist_combobox['values']]
+                    except IndexError:
+                        pass
 
-        elif mode == 'classical':
-            artist_variable.set('Select the composer:')
+            case 'classical':
+                artist_variable.set('Select the composer:')
 
-            classical_type_label.grid(row=10, column=0, columnspan=width // 6, sticky='W', pady=2)
-            classical_type_combobox.grid(row=10, column=width // 6, columnspan=4, sticky='EW')
-            classical_number_label.grid(row=11, column=0, columnspan=width // 6, sticky='W', pady=2)
-            classical_number_combobox.grid(row=11, column=width // 6, columnspan=4, sticky='EW')
-            classical_key_label.grid(row=12, column=0, columnspan=width // 6, sticky='W', pady=2)
-            classical_key_combobox.grid(row=12, column=width // 6, columnspan=4, sticky='EW')
-            classical_work_label.grid(row=13, column=0, columnspan=width // 6, sticky='W', pady=2)
-            classical_work_combobox.grid(row=13, column=width // 6, columnspan=4, sticky='EW')
-            classical_comment_label.grid(row=14, column=0, columnspan=width // 6, sticky='W', pady=2)
-            classical_comment_combobox.grid(row=14, column=width // 6, columnspan=4, sticky='EW')
-            classical_cut_label.grid(row=15, column=0, columnspan=width // 6, sticky='W', pady=2)
-            classical_cut_entry.grid(row=15, column=width // 6, columnspan=4, sticky='EW')
+                classical_type_label.grid(row=10, column=0, columnspan=width // 6, sticky='W', pady=2)
+                classical_type_combobox.grid(row=10, column=width // 6, columnspan=4, sticky='EW')
+                classical_number_label.grid(row=11, column=0, columnspan=width // 6, sticky='W', pady=2)
+                classical_number_combobox.grid(row=11, column=width // 6, columnspan=4, sticky='EW')
+                classical_key_label.grid(row=12, column=0, columnspan=width // 6, sticky='W', pady=2)
+                classical_key_combobox.grid(row=12, column=width // 6, columnspan=4, sticky='EW')
+                classical_work_label.grid(row=13, column=0, columnspan=width // 6, sticky='W', pady=2)
+                classical_work_combobox.grid(row=13, column=width // 6, columnspan=4, sticky='EW')
+                classical_comment_label.grid(row=14, column=0, columnspan=width // 6, sticky='W', pady=2)
+                classical_comment_combobox.grid(row=14, column=width // 6, columnspan=4, sticky='EW')
+                classical_cut_label.grid(row=15, column=0, columnspan=width // 6, sticky='W', pady=2)
+                classical_cut_entry.grid(row=15, column=width // 6, columnspan=4, sticky='EW')
+
+        # new
+        for i, name in enumerate(Globals.metadata_names):
+            name.grid_forget()
+            if i < 6 or (
+                    metadata_mode.get() == 'album' or metadata_mode.get() == 'vgm') and i < 9 or metadata_mode.get() == 'classical' and i >= 9:
+                name.grid(row=0, column=i)
+                name.bind('<MouseWheel>', scroll)
+
+
+        if Globals.metadata_widgets:
+            Globals.metadata_widgets.mode = metadata_mode.get()
+            Globals.metadata_widgets.grid()
+
+            for l in Globals.metadata_widgets.rows:
+                for w in l:
+                    w.bind('<MouseWheel>', scroll)
 
     # event methods
     # track changes of comboboxes to update other comboboxes
@@ -1057,48 +1253,54 @@ def main():
                 'Folder: ' + (Globals.folder if Globals.folder else 'Default') + ' (click to open)')
 
             metadata_mode.set(Globals.saved_urls[url]['metadata_mode'])
+            update_metadata_mode()
 
     def combobox_write(*args):
-        if metadata_mode.get() == 'vgm':
-            artist: str = artist_combobox.get()
-            album_combobox.set(artist if artist.endswith(' OST') else artist + ' OST')
-        elif metadata_mode.get() == 'classical':
-            # put the values from the comboboxes together to make the title
-            artist: str = artist_combobox.get()
-            type: str = classical_type_combobox.get()
-            number: str = classical_number_combobox.get()
-            key: str = classical_key_combobox.get()
-            work: str = classical_work_combobox.get()
-            comment: str = classical_comment_combobox.get()
+        match metadata_mode.get():
+            case 'vgm':
+                artist: str = artist_combobox.get()
+                album_combobox.set(artist if artist.endswith(' OST') else artist + ' OST')
+            case 'classical':
+                # put the values from the comboboxes together to make the title
+                artist: str = artist_combobox.get()
+                type: str = classical_type_combobox.get()
+                number: str = classical_number_combobox.get()
+                key: str = classical_key_combobox.get()
+                work: str = classical_work_combobox.get()
+                comment: str = classical_comment_combobox.get()
 
-            real_key: str = ''
-            real_work: str = ''
-            if key:
-                real_key = key[0].upper() + ('' if len(key) == 1 else (' Flat' if key[1] == 'b' else ' Sharp')) + \
-                           (' Major' if key[0].isupper() else ' Minor')
+                real_key: str = ''
+                real_work: str = ''
+                if key:
+                    real_key = key[0].upper() + ('' if len(key) == 1 else (' Flat' if key[1] == 'b' else ' Sharp')) + \
+                               (' Major' if key[0].isupper() else ' Minor')
 
-            if work:
-                formats: dict[str, str] = Globals.classical_work_format_special
-                work_numbers: list[str] = work.split(' ')
-                real_work = ((formats[artist] + ' ') if artist in formats else 'Op. ') + work_numbers[0] + \
-                            (((' No. ' if artist != 'Haydn' else ':') + work_numbers[1])
-                             if len(work_numbers) > 1 and work_numbers[1] else '') + \
-                            ((': ' + ' '.join(work_numbers[2:])) if len(work_numbers) > 2 else '')
+                if work:
+                    formats: dict[str, str] = Globals.classical_work_format_special
+                    work_numbers: list[str] = work.split(' ')
+                    real_work = ((formats[artist] + ' ') if artist in formats else 'Op. ') + work_numbers[0] + \
+                                (((' No. ' if artist != 'Haydn' else ':') + work_numbers[1])
+                                 if len(work_numbers) > 1 and work_numbers[1] else '') + \
+                                ((': ' + ' '.join(work_numbers[2:])) if len(work_numbers) > 2 else '')
 
-            title_combobox.set("{0}{1}{2}{3}{4}".format(type,
-                                                        (' No. ' + number) if number else '',
-                                                        (' in ' + real_key) if real_key else '',
-                                                        (', ' + real_work) if real_work else '',
-                                                        ' (' + comment + ')' if comment else ''
-                                                        ))
+                title_combobox.set("{0}{1}{2}{3}{4}".format(type,
+                                                            (' No. ' + number) if number else '',
+                                                            (' in ' + real_key) if real_key else '',
+                                                            (', ' + real_work) if real_work else '',
+                                                            ' (' + comment + ')' if comment else ''
+                                                            ))
 
     # track change of window size
     def size_changed(event):
         try:
-            error_text['height'] = (root.winfo_height() - download_frame.winfo_height() - metadata_frame.winfo_height()
+            error_text['height'] = (root.winfo_height() - download_frame.winfo_height() - new_metadata_labelframe.winfo_height()
                                     - 80) // 16
         except NameError:
             pass
+
+    def scroll(event):
+        metadata_canvas.yview_scroll(int(-1 * (event.delta / 40)), UNITS)
+        return 'break'
 
     # track exit of program
     def on_exit():
@@ -1114,6 +1316,47 @@ def main():
 
     download_frame = ttk.Labelframe(root, padding=(3, 10, 12, 12), borderwidth=5, relief='ridge', text='Download')
     metadata_frame = ttk.Labelframe(root, padding=(3, 10, 12, 12), borderwidth=5, relief='ridge', text='Metadata')
+
+    new_metadata_labelframe = ttk.Labelframe(root, padding=(3, 10, 12, 12), borderwidth=5, relief='ridge',
+                                             text='Metadata')
+
+    metadata_canvas = Canvas(new_metadata_labelframe)
+    metadata_scrollbar = ttk.Scrollbar(new_metadata_labelframe, orient=VERTICAL, command=metadata_canvas.yview)
+    metadata_canvas.configure(yscrollcommand=metadata_scrollbar.set)
+    metadata_canvas.bind('<MouseWheel>', scroll)
+    new_metadata_frame = ttk.Frame(metadata_canvas)
+    new_metadata_frame.bind('<Configure>',
+                            lambda e: metadata_canvas.configure(scrollregion=metadata_canvas.bbox("all")))
+    metadata_canvas.create_window((0, 0), window=new_metadata_frame, anchor="nw")
+
+    new_metadata_labelframe.grid(row=2, column=0, sticky='NEW', padx=5, pady=5)
+
+    metadata_canvas.pack(side=LEFT, expand=True, fill=X)
+    metadata_scrollbar.pack(side=RIGHT, fill=Y)
+
+    Globals.metadata_names = [ttk.Label(new_metadata_frame, text='Video title'),
+                              ttk.Label(new_metadata_frame, text='Artist'),
+                              ttk.Label(new_metadata_frame, text=''),
+                              ttk.Label(new_metadata_frame, text='Swap'),
+                              ttk.Label(new_metadata_frame, text='Title'),
+                              ttk.Label(new_metadata_frame, text=''),
+
+                              ttk.Label(new_metadata_frame, text='Album'),
+                              ttk.Label(new_metadata_frame, text='Track'),
+                              ttk.Label(new_metadata_frame, text='Previous'),
+
+                              ttk.Label(new_metadata_frame, text='Type'),
+                              ttk.Label(new_metadata_frame, text='Number'),
+                              ttk.Label(new_metadata_frame, text='Key'),
+                              ttk.Label(new_metadata_frame, text='Work'),
+                              ttk.Label(new_metadata_frame, text='Comment'),
+                              ttk.Label(new_metadata_frame, text='Cut')
+                              ]
+
+    new_metadata_button = ttk.Button(new_metadata_labelframe, text='Apply metadata', command=new_apply_metadata,
+                                     state='disabled')
+    new_metadata_button.pack(before=metadata_canvas, side=BOTTOM, anchor='w')
+
     error_frame = ttk.Labelframe(root, padding=(3, 10, 12, 12), borderwidth=5, relief='ridge', text='Info and Errors')
 
     # menu variables
@@ -1289,14 +1532,14 @@ def main():
     metadata_auto_button.grid(row=21, column=0, columnspan=1, pady=(5, 0), sticky='W')
     metadata_button.grid(row=21, column=width // 6, columnspan=4, pady=(5, 0), sticky='W')
 
-    error_frame.grid(row=2, column=0, sticky='NEW', padx=5, pady=5)
+    error_frame.grid(row=3, column=0, sticky='NEW', padx=5, pady=5)
     error_text.grid(row=0, column=0, columnspan=width, sticky='EW', pady=(5, 0))
 
     url_combobox.focus()
 
     root.columnconfigure(0, weight=1)
 
-    for f in [download_frame, metadata_frame, error_frame]:
+    for f in [download_frame, metadata_frame, new_metadata_labelframe, error_frame]:
         for i in range(6):
             f.columnconfigure(i, weight=1)
 
