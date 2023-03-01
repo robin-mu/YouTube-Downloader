@@ -29,17 +29,23 @@ class Globals:
     folder: str = ''  # folder to sync with
     files: dict[str, dict[str, Union[str, list[str]]]] = {}
     metadata_file: dict[str, dict[str, str]] = {}
-    saved_urls: dict[str, dict[str, str]] = {}
+    library: dict[str, dict[str, dict[str, str]]] = {}
+    files_keep: list[
+        str] = []  # files whose corresponding videos have been removed from the playlist, but where the file should not be deleted
     num_threads: int = 100
-    metadata_widgets = None
+    metadata_selection = None
     metadata_names: list[ttk.Widget] = []
+    metadata_selections = queue.Queue()
+    metadata_modes = ['normal', 'album', 'vgm', 'classical']
     app = None
 
     try:
         with open('metadata.json', 'r', encoding='utf-8') as f:
             metadata_file = json.load(f)
-        with open('saved_urls.json', 'r', encoding='utf-8') as f:
-            saved_urls = json.load(f)
+        with open('library.json', 'r', encoding='utf-8') as f:
+            library = json.load(f)
+        with open('files_keep.json', 'r', encoding='utf-8') as f:
+            files_keep = json.load(f)
     except Exception as e:
         print('[json]', e)
 
@@ -109,12 +115,14 @@ class Globals:
         'Ballett': 'Ballet'
     }
 
+
 class MetadataSelection:
     def __init__(self, root: ttk.Widget, metadata: list[dict[str, str | list[str]]], mode: str):
         self.rows = []
         self.vars: list[list[StringVar]] = []
         self.data = metadata
         self.mode: str = mode
+
         for i, f in enumerate(metadata):
             self.vars.append([StringVar() for _ in range(6)])
             self.rows.append([ttk.Label(root, text=f['originaltitle'], width=50, cursor='hand2'),
@@ -203,7 +211,7 @@ class MetadataSelection:
                         self.mode == 'album' or self.mode == 'vgm') and j < 9 or self.mode == 'classical' and j >= 9:
                     w.grid(row=i + 1, column=j, sticky='W', padx=1, pady=1)
 
-            current = list(Globals.files.values())[i]
+            current = self.data[i]
             if self.mode == 'album':
                 self.rows[i][6].set(current['album'][0] if current['album'] else '')
                 self.rows[i][6]['values'] = current['album']
@@ -266,6 +274,175 @@ class MetadataSelection:
                 w.grid_forget()
 
 
+class LibraryList:
+    def __init__(self, root: tkinter.Widget, library_key: str, base_folder: str, default_mode: str, row: int):
+        self.root = root
+        self.library_key = library_key
+        self.base_folder = base_folder
+        self.default_mode = default_mode
+        self.row = row
+
+        self.library_names = [
+            ttk.Label(root, text='Name'),
+            ttk.Label(root, text='Videos'),
+            ttk.Label(root, text='Synced'),
+            ttk.Label(root, text='Link'),
+            ttk.Label(root, text='Folder'),
+            ttk.Label(root, text='Mode'),
+        ]
+
+        self.library_values = [
+            Variable(value=list(Globals.library[self.library_key].keys())),
+            Variable(value=['' for _ in range(len(Globals.library[self.library_key]))]),
+            Variable(value=['' for _ in range(len(Globals.library[self.library_key]))]),
+            Variable(value=[e['url'] for e in Globals.library[self.library_key].values()]),
+            Variable(value=[e['folder'] for e in Globals.library[self.library_key].values()]),
+            Variable(value=[e['metadata_mode'] for e in Globals.library[self.library_key].values()]),
+        ] if self.library_key in Globals.library else [Variable(value=[]) for _ in range(6)]
+
+        self.scrollbar = ttk.Scrollbar(self.root, orient=VERTICAL)
+
+        self.library = [
+            Listbox(root, selectmode='browse', listvariable=self.library_values[i],
+                    height=min(len(Globals.library[self.library_key]), 15) if self.library_key in Globals.library else 10,
+                    yscrollcommand=self.scroll) for i in range(len(self.library_values))
+        ]
+
+        self.scrollbar['command'] = self.scrollbar_move
+
+        for i in [0, 3, 4, 5]:
+            self.library[i].bind('<Double-1>', lambda event, column=i: self.library_change(column))
+
+        self.library_refresh_button = ttk.Button(root, text='Refresh', command=self.library_refresh)
+        self.library_sync_button = ttk.Button(root, text='Sync', command=self.library_sync)
+
+        for i, w in enumerate(self.library_names):
+            w.grid(row=row * 3, column=i, sticky='ew')
+
+        for i, w in enumerate(self.library):
+            w.grid(row=row * 3 + 1, column=i, sticky='ew')
+
+        self.scrollbar.grid(row=row * 3, column=6, sticky='ns', rowspan=2)
+
+        self.library_refresh_button.grid(row=row * 3 + 2, column=0, sticky='ew')
+        self.library_sync_button.grid(row=row * 3 + 2, column=1, sticky='ew')
+
+    def scrollbar_move(self, a, b):
+        for box in self.library:
+            box.yview(a, b)
+
+    def scroll(self, a, b):
+        self.scrollbar.set(a, b)
+        for box in self.library:
+            box.yview('moveto', a)
+
+    def library_refresh(self) -> dict[str, dict[str, str]]:
+        # check bookmark file for new playlists
+        with open(r'C:\Users\Robin Müller\AppData\Roaming\Opera Software\Opera Stable\Bookmarks', 'r',
+                  encoding='utf8') as f:
+            file = json.load(f)
+            folders = [e for e in file['roots']['custom_root']['userRoot']['children'] if e['name'] == 'Music'][0][
+                'children']
+            urls = [[e['url'] for e in f['children']] for f in folders if f['name'] == self.library_key][0]
+            new = [url for url in urls if url not in self.library_values[3].get()]
+            print(new)
+
+        ydl = youtube_dl.YoutubeDL({'logger': Logger()})
+
+        for url in new:
+            info = ydl.extract_info(url, process=False)
+            title = info['title']
+            if self.library_key not in Globals.library:
+                Globals.library[self.library_key] = {}
+
+            if self.default_mode == 'album':
+                video_info = ydl.extract_info(list(info['entries'])[0]['url'], process=False)
+                title = video_info['artist'].split(',')[0] + ' - ' + title[8:]
+            Globals.library[self.library_key][title] = {'url': url,
+                                                        'folder': self.base_folder + '/' + safe_filename(title),
+                                                        'metadata_mode': self.default_mode}
+            self.__init__(self.root, self.library_key, self.base_folder, self.default_mode, self.row)
+
+        out = {}
+        for i in range(len(self.library_values[3].get())):
+            url = self.library_values[3].get()[i]
+            folder = self.library_values[4].get()[i]
+            mode = self.library_values[5].get()[i]
+            downloaded_ids = []
+
+            if folder and os.path.isdir(folder):
+                for f in os.listdir(folder):
+                    if os.path.join(folder, f) not in Globals.files_keep and f.split('.')[-1] == 'mp3':
+                        try:
+                            id3 = ID3(os.path.join(folder, f))
+                            video_id = id3.getall('TPUB')[0].text[0]
+                            if video_id:
+                                downloaded_ids.append(video_id)
+                        except IndexError:
+                            print(f'[Debug] {f} has no TPUB-Frame set')
+
+            info = ydl.extract_info(url, process=False)
+            playlist_ids = [e['id'] for e in info['entries']]
+
+            not_downloaded_urls = [e for e in playlist_ids if e not in downloaded_ids]
+            print(f'Not downloaded: {not_downloaded_urls}')
+            if sorted(playlist_ids) != sorted(downloaded_ids):
+                out[url] = {'folder': folder, 'mode': mode}
+
+            synced = list(self.library_values[2].get())
+            synced[i] = 'Yes' if all([e in downloaded_ids for e in playlist_ids]) else 'No'
+            self.library_values[2].set(synced)
+
+            videos = list(self.library_values[1].get())
+            videos[i] = f'Playlist: {len(playlist_ids)}, Downloaded: {len([e for e in playlist_ids if e in downloaded_ids])}, in Folder: {len(downloaded_ids)}'
+            self.library_values[1].set(videos)
+
+        pprint(out)
+        return out
+
+    def library_change(self, column=None):
+        listbox = self.library[column]
+        sel = listbox.curselection()
+
+        if sel:
+            row = sel[0]
+            new = list(self.library_values[column].get())
+            key = self.library_values[0].get()[row]
+            if column in [0, 3, 5]:
+                prompt = simpledialog.askstring('New value', 'Enter a new value')
+                if prompt:
+                    new[row] = prompt
+
+                    if column == 0:
+                        Globals.library[self.library_key][prompt] = Globals.library[self.library_key][key]
+                        Globals.library[self.library_key].pop(key, None)
+                    elif column == 3:
+                        Globals.library[self.library_key][key]['url'] = prompt
+                    elif column == 5:
+                        Globals.library[self.library_key][key]['metadata_mode'] = prompt
+            else:
+                prompt = filedialog.askdirectory()
+                new[row] = prompt or ''
+
+                Globals.library[self.library_key][key]['folder'] = prompt or ''
+
+            self.library_values[column].set(new)
+
+    def library_sync(self):
+        to_download = self.library_refresh()
+        Globals.app.download_mode.set('sync')
+
+        download_thread = threading.Thread(target=lambda: download(to_download))
+        download_thread.start()
+
+        Globals.app.notebook.select(0)
+
+        while download_thread.is_alive():
+            Tk.update(Globals.app.root)
+
+        Globals.app.enable_metadata_selection()
+
+
 class App:
     def __init__(self):
         self.root = Tk()
@@ -326,6 +503,7 @@ class App:
         self.menubar.add_cascade(menu=self.menu_debug, label='Debug')
         self.menu_debug.add_checkbutton(label='Show debug messages', variable=self.debug, onvalue='1', offvalue='0')
         self.menu_debug.add_command(label='Reset', command=self.reset)
+        self.menu_debug.add_command(label='Test', command=self.test)
 
         # widgets
         # Notebook
@@ -338,7 +516,8 @@ class App:
         self.download_frame = ttk.Labelframe(self.download_tab, padding=(3, 10, 12, 12), borderwidth=5, relief='ridge',
                                              text='Download')
 
-        self.metadata_labelframe = ttk.Labelframe(self.download_tab, padding=(3, 10, 12, 12), borderwidth=5, relief='ridge',
+        self.metadata_labelframe = ttk.Labelframe(self.download_tab, padding=(3, 10, 12, 12), borderwidth=5,
+                                                  relief='ridge',
                                                   text='Metadata')
 
         self.error_frame = ttk.Labelframe(self.download_tab, padding=(3, 10, 12, 12), borderwidth=5, relief='ridge',
@@ -347,10 +526,11 @@ class App:
         # download widgets
         self.url_label = ttk.Label(self.download_frame,
                                    text='Input video/playlist URL, search query or saved URL name:')
-        self.url_combobox = ttk.Combobox(self.download_frame, values=list(Globals.saved_urls.keys()),
+        self.url_combobox = ttk.Combobox(self.download_frame, values=list(Globals.library['Playlists'].keys()),
                                          textvariable=self.url_variable)
         self.save_url_button = ttk.Button(self.download_frame, text='Save...', command=self.save_url)
-        self.output_folder_label = ttk.Label(self.download_frame, textvariable=self.output_folder_variable, cursor='hand2')
+        self.output_folder_label = ttk.Label(self.download_frame, textvariable=self.output_folder_variable,
+                                             cursor='hand2')
         self.output_folder_button = ttk.Button(self.download_frame, text='Select output folder...',
                                                command=self.select_output_folder)
         self.download_button = ttk.Button(self.download_frame, text='Download',
@@ -390,41 +570,9 @@ class App:
         self.library_tab = ttk.Frame()
         self.notebook.add(self.library_tab, text='Library')
 
-        self.library_names = [
-            ttk.Label(self.library_tab, text='Name'),
-            ttk.Label(self.library_tab, text='Videos'),
-            ttk.Label(self.library_tab, text='Synced'),
-            ttk.Label(self.library_tab, text='Link'),
-            ttk.Label(self.library_tab, text='Folder'),
-            ttk.Label(self.library_tab, text='Mode'),
-        ]
-
-        self.library_values = [
-            Variable(value=list(Globals.saved_urls.keys())),
-            Variable(value=['' for _ in range(len(Globals.saved_urls))]),
-            Variable(value=['' for _ in range(len(Globals.saved_urls))]),
-            Variable(value=[e['url'] for e in Globals.saved_urls.values()]),
-            Variable(value=[e['folder'] for e in Globals.saved_urls.values()]),
-            Variable(value=[e['metadata_mode'] for e in Globals.saved_urls.values()]),
-        ]
-
-        self.library = [
-            Listbox(self.library_tab, selectmode='browse', listvariable=self.library_values[i]) for i in range(len(self.library_values))
-        ]
-
-        for i in [0, 3, 4, 5]:
-            self.library[i].bind('<Double-1>', lambda event, column=i: self.library_change(column))
-
-        self.library_refresh_button = ttk.Button(self.library_tab, text='Refresh', command=self.library_refresh)
-        #self.library_sync_button = ttk.Button(self.library_tab, text='Sync', command=self.library_sync)
-
-        for i, w in enumerate(self.library_names):
-            w.grid(row=0, column=i, sticky='ew')
-
-        for i, w in enumerate(self.library):
-            w.grid(row=1, column=i, sticky='ew')
-
-        self.library_refresh_button.grid(row=2, column=0, sticky='ew')
+        LibraryList(self.library_tab, 'Playlists', 'D:/Musik', 'normal', 0)
+        LibraryList(self.library_tab, 'Alben', 'D:/Musik/Alben', 'album', 1)
+        LibraryList(self.library_tab, 'Später Anhören Alben', 'D:/Musik/Später Anhören Alben', 'album', 2)
 
         # widget events
         self.url_variable.trace_add('write', self.url_combobox_write)
@@ -494,63 +642,6 @@ class App:
     def mainloop(self):
         self.root.mainloop()
 
-    def library_refresh(self):
-        for i in range(len(self.library_values[3].get())):
-            folder = self.library_values[4].get()[i]
-            downloaded_ids = []
-
-            if folder:
-                for f in os.listdir(folder):
-                    if f.split('.')[-1] == 'mp3':
-                        try:
-                            id3 = ID3(os.path.join(folder, f))
-                            video_id = id3.getall('TPUB')[0].text[0]
-                            if video_id:
-                                downloaded_ids.append(video_id)
-                        except IndexError:
-                            print(f'[Debug] {f} has no TPUB-Frame set')
-
-                ydl = youtube_dl.YoutubeDL({'logger': Logger()})
-                info = ydl.extract_info(self.library_values[3].get()[i], process=False)
-                playlist_ids = [e['id'] for e in info['entries']]
-
-                synced = list(self.library_values[2].get())
-                print([e for e in playlist_ids if e not in downloaded_ids])
-                synced[i] = 'Yes' if all([e in downloaded_ids for e in playlist_ids]) else 'No'
-                self.library_values[2].set(synced)
-
-                videos = list(self.library_values[1].get())
-                videos[i] = f'Playlist: {len(playlist_ids)}, Downloaded: {len(downloaded_ids)}'
-                self.library_values[1].set(videos)
-
-    def library_change(self, column=None):
-        listbox = self.library[column]
-        sel = listbox.curselection()
-
-        if sel:
-            row = sel[0]
-            new = list(self.library_values[column].get())
-            key = self.library_values[0].get()[row]
-            if column in [0, 3, 5]:
-                prompt = simpledialog.askstring('New value', 'Enter a new value')
-                if prompt:
-                    new[row] = prompt
-
-                    if column == 0:
-                        Globals.saved_urls[prompt] = Globals.saved_urls[key]
-                        Globals.saved_urls.pop(key, None)
-                    elif column == 3 or column == 5:
-                        Globals.saved_urls[key]['url'] = prompt
-                    elif column == 5:
-                        Globals.saved_urls[key]['metadata_mode'] = prompt
-            else:
-                prompt = filedialog.askdirectory()
-                new[row] = prompt or ''
-
-                Globals.saved_urls[key]['folder'] = prompt or ''
-
-            self.library_values[column].set(new)
-
     # menu click methods
     def update_download_mode(self):
         for w in self.download_mode_widgets:
@@ -581,7 +672,7 @@ class App:
                 self.download_button['command'] = download_metadata
 
     def update_metadata_selection(self):
-        if Globals.metadata_widgets:
+        if Globals.metadata_selection:
             for i, name in enumerate(Globals.metadata_names):
                 name.grid_forget()
                 if i < 6 or (self.metadata_mode.get() == 'album' or self.metadata_mode.get() == 'vgm') \
@@ -589,10 +680,10 @@ class App:
                     name.grid(row=0, column=i)
                     name.bind('<MouseWheel>', self.scroll)
 
-            Globals.metadata_widgets.mode = self.metadata_mode.get()
-            Globals.metadata_widgets.grid()
+            Globals.metadata_selection.mode = self.metadata_mode.get()
+            Globals.metadata_selection.grid()
 
-            for l in Globals.metadata_widgets.rows:
+            for l in Globals.metadata_selection.rows:
                 for w in l:
                     w.bind('<MouseWheel>', self.scroll)
 
@@ -619,12 +710,14 @@ class App:
         if not url:
             return
 
-        url = Globals.saved_urls[url]['url'] if url in Globals.saved_urls else url
+        url = Globals.library['Playlists'][url]['url'] if url in Globals.library['Playlists'] else url
 
         # disable download widgets
         self.disable_download_widgets()
 
-        download_thread = threading.Thread(target=lambda url=url, folder=Globals.folder: download(url, folder))
+        download_thread = threading.Thread(
+            target=lambda url=url, folder=Globals.folder, mode=self.metadata_mode: download(
+                {url: {'folder': folder, 'mode': mode}}))
         download_thread.start()
 
         while download_thread.is_alive():
@@ -638,37 +731,52 @@ class App:
         self.enable_metadata_selection()
 
     def enable_metadata_selection(self):
-        Globals.metadata_widgets = MetadataSelection(self.metadata_frame, list(Globals.files.values()),
-                                                     self.get_metadata_mode())
+        for e in [[Globals.files[k] for k in Globals.files if Globals.files[k]['mode'] == mode] for mode in Globals.metadata_modes]:
+            if e:
+                Globals.metadata_selections.put(e)
+
+        selection = Globals.metadata_selections.get()
+        self.metadata_mode.set(selection[0]['mode'])
+
+        Globals.metadata_selection = MetadataSelection(self.metadata_frame, selection, selection[0]['mode'])
         self.update_metadata_selection()
         self.enable_widgets(self.metadata_button)
 
     def apply_all_metadata(self):
-        for i, file in enumerate(Globals.metadata_widgets.data):
-            file['artist'] = Globals.metadata_widgets.rows[i][1].get()
-            file['title'] = Globals.metadata_widgets.rows[i][4].get()
+        for i, file in enumerate(Globals.metadata_selection.data):
+            file['artist'] = Globals.metadata_selection.rows[i][1].get()
+            file['title'] = Globals.metadata_selection.rows[i][4].get()
 
             if self.metadata_mode.get() == 'album' or self.metadata_mode.get() == 'vgm':
-                file['album'] = Globals.metadata_widgets.rows[i][6].get()
-                file['track'] = Globals.metadata_widgets.rows[i][7].get()
+                file['album'] = Globals.metadata_selection.rows[i][6].get()
+                file['track'] = Globals.metadata_selection.rows[i][7].get()
             else:
                 file['album'] = ''
                 file['track'] = ''
 
-            if self.metadata_mode.get() == 'classical' and Globals.metadata_widgets.rows[i][14].get().strip():
-                file['cut'] = Globals.metadata_widgets.rows[i][14].get()
+            if self.metadata_mode.get() == 'classical' and Globals.metadata_selection.rows[i][14].get().strip():
+                file['cut'] = Globals.metadata_selection.rows[i][14].get()
 
             apply_metadata(file['id'], file)
 
-        self.reset()
+        if not Globals.metadata_selections.empty():
+            selection = Globals.metadata_selections.get()
+            pprint(selection)
+            self.metadata_mode.set(selection[0]['mode'])
+
+            Globals.metadata_selection.reset()
+            Globals.metadata_selection = MetadataSelection(self.metadata_frame, selection, selection[0]['mode'])
+            self.update_metadata_selection()
+        else:
+            self.reset()
 
     def save_url(self):
         url = simpledialog.askstring(title='Save URL',
                                      prompt='Input the name under which to save the URL and settings:')
         if url:
-            Globals.saved_urls[url] = {'url': self.url_combobox.get(), 'folder': Globals.folder,
-                                       'metadata_mode': self.metadata_mode.get()}
-        self.url_combobox['values'] = list(Globals.saved_urls.keys())
+            Globals.library['Playlists'][url] = {'url': self.url_combobox.get(), 'folder': Globals.folder,
+                                                 'metadata_mode': self.metadata_mode.get()}
+        self.url_combobox['values'] = list(Globals.library['Playlists'].keys())
 
     def select_output_folder(self):
         Globals.folder = filedialog.askdirectory()
@@ -688,21 +796,32 @@ class App:
             json.dump(Globals.metadata_file, f)
 
         # save saved urls to file
-        with open('saved_urls.json', 'w') as f:
-            json.dump(Globals.saved_urls, f)
+        with open('library.json', 'w') as f:
+            json.dump(Globals.library, f)
 
-        # move files to output folder if one has been specified
-        if Globals.folder:
-            for f in os.listdir('out'):
-                try:
-                    if f.split('.')[-1] == 'mp3':
-                        shutil.move(os.path.join('out', f), os.path.join(Globals.folder, f))
-                        self.print_info('sync', f'Moving {f} to output folder')
-                    else:
-                        os.remove(os.path.join('out', f))
-                        self.print_info('sync', f'Deleting {f}')
-                except OSError as e:
-                    self.print_info('OS', e)
+        with open('files_keep.json', 'w', encoding='utf-8') as f:
+            json.dump(Globals.files_keep, f)
+
+        # move files to output folder
+        for f in os.listdir('out'):
+            try:
+                if f.split('.')[-1] == 'mp3':
+                    try:
+                        id3 = ID3(os.path.join('out', f))
+                        video_id = id3.getall('TPUB')[0].text[0]
+                        if video_id:
+                            if not os.path.isdir(Globals.files[video_id]['folder']):
+                                os.mkdir(Globals.files[video_id]['folder'])
+
+                            shutil.move(os.path.join('out', f), os.path.join(Globals.files[video_id]['folder'], f))
+                            self.print_info('sync', f'Moving {f} to {Globals.files[video_id]["folder"]}')
+                    except IndexError as e:
+                        print(f'[Debug] {f} can not be moved: ' + str(e))
+                else:
+                    os.remove(os.path.join('out', f))
+                    self.print_info('sync', f'Deleting {f}')
+            except OSError as e:
+                self.print_info('OS', e)
 
         # reset globals
         Globals.folder = ''
@@ -710,9 +829,9 @@ class App:
 
         # reset widgets
         self.disable_widgets(self.metadata_button)
-        if Globals.metadata_widgets:
-            Globals.metadata_widgets.reset()
-            Globals.metadata_widgets = None
+        if Globals.metadata_selection:
+            Globals.metadata_selection.reset()
+            Globals.metadata_selection = None
         for w in Globals.metadata_names:
             w.grid_forget()
 
@@ -729,12 +848,12 @@ class App:
     # event methods
     # track changes of comboboxes to update other comboboxes
     def url_combobox_write(self, *args):
-        if (url := self.url_combobox.get()) in Globals.saved_urls:
-            Globals.folder = Globals.saved_urls[url]['folder']
+        if (url := self.url_combobox.get()) in Globals.library['Playlists']:
+            Globals.folder = Globals.library['Playlists'][url]['folder']
             self.output_folder_variable.set(
                 'Folder: ' + (Globals.folder if Globals.folder else 'Default') + ' (click to open)')
 
-            self.metadata_mode.set(Globals.saved_urls[url]['metadata_mode'])
+            self.metadata_mode.set(Globals.library['Playlists'][url]['metadata_mode'])
             self.update_metadata_selection()
 
     # track change of window size
@@ -800,6 +919,13 @@ class App:
     def get_metadata_mode(self):
         return self.metadata_mode.get()
 
+    def test(self):
+        download({'https://www.youtube.com/playlist?list=PL77J9_Azlrw9_te4dOoqaY3nt8KCa3dbS': {'folder': 'Test',
+                                                                                               'mode': 'normal'},
+                  'https://www.youtube.com/playlist?list=PL77J9_Azlrw_mxM8z03ukfNaq9483ssk0': {'folder': 'testest',
+                                                                                               'mode': 'normal'}})
+        self.enable_metadata_selection()
+
 
 class Logger(object):
     def debug(self, msg):
@@ -824,13 +950,13 @@ def sec_to_min(sec: int) -> str:
     return f"{sec // 60}:{'0' if (sec % 60) < 10 else ''}{sec % 60}"
 
 
-def generate_metadata_choices(metadata: dict[str, Any]) -> dict[str, Union[str, list[str]]]:
+def generate_metadata_choices(metadata: dict[str, Any], mode: str) -> dict[str, Union[str, list[str]]]:
     choices = {'id': metadata['id'], 'originaltitle': metadata['title']}
 
     title_choices: list[str] = []
     artist_choices: list[str] = []
     album_choices: list[str] = []
-    track_choices: list[str] = []
+    track_choices: list[str] = [Globals.files[metadata['id']]['playlist_index']] if 'playlist_index' in Globals.files[metadata['id']] else []
 
     # add data from metadata.json as first choice
     choices['file'] = False
@@ -863,8 +989,9 @@ def generate_metadata_choices(metadata: dict[str, Any]) -> dict[str, Union[str, 
             title_choices.append(remove_brackets(track))
             title_choices.append(track)
 
-    if 'artist' in metadata:
-        artist = metadata['artist'] if metadata['artist'] else ''
+    if 'artist' in metadata and metadata['artist']:
+        artist = metadata['artist']
+        artist_choices.append(artist.split(',')[0])
         artist_choices.append(remove_brackets(artist))
         artist_choices.append(artist)
 
@@ -902,7 +1029,7 @@ def generate_metadata_choices(metadata: dict[str, Any]) -> dict[str, Union[str, 
         album_choices.append(metadata['album'])
 
     # VGM mode
-    if Globals.app.get_metadata_mode() == 'vgm':
+    if mode == 'vgm':
         for s in [' OST', ' Soundtrack', ' Original', ' Official', ' Music']:
             artist_choices = [i.replace(s, '').strip() for i in artist_choices]
             title_choices = [i.replace(s, '').strip() for i in title_choices]
@@ -920,7 +1047,7 @@ def generate_metadata_choices(metadata: dict[str, Any]) -> dict[str, Union[str, 
     work_choices: list[str] = []
     comment_choices: list[str] = ([title.split('"')[1]] if title.count('"') >= 2 else []) + \
                                  [i.split(')')[0] for i in title.split('(') if ')' in i] if '(' in title else []
-    if Globals.app.get_metadata_mode() == 'classical':
+    if mode == 'classical':
         # look for known composer in title, but spelled differently
         for c in Globals.classical_composers_real:
             if c.lower() in title.lower():
@@ -961,7 +1088,8 @@ def generate_metadata_choices(metadata: dict[str, Any]) -> dict[str, Union[str, 
 
                 if 'sharp' in text or len(text) > 2 and text[1:2] == 'is' or len(text) > 1 and text[1] == '#':
                     key += 's'
-                elif 'flat' in text or len(text) > 2 and (text[1] == 's' or text[1:2] == 'es') or len(text) > 1 and (text[1] == 'b' or text[1] == '♭'):
+                elif 'flat' in text or len(text) > 2 and (text[1] == 's' or text[1:2] == 'es') or len(text) > 1 and (
+                        text[1] == 'b' or text[1] == '♭'):
                     key += 'b'
 
                 key_choices.append(key)
@@ -987,7 +1115,7 @@ def generate_metadata_choices(metadata: dict[str, Any]) -> dict[str, Union[str, 
     choices['title'] = list(dict.fromkeys(filter(None, title_choices)))
     choices['artist'] = list(
         dict.fromkeys(
-            filter(None, composer_choices if Globals.app.get_metadata_mode() == 'classical' else artist_choices)))
+            filter(None, composer_choices if mode == 'classical' else artist_choices)))
     choices['album'] = list(dict.fromkeys(album_choices))
     choices['track'] = list(dict.fromkeys(track_choices))
     choices['type'] = list(dict.fromkeys(type_choices))
@@ -1001,7 +1129,8 @@ def generate_metadata_choices(metadata: dict[str, Any]) -> dict[str, Union[str, 
 
 # download mode dependent methods
 # download modes that download files (Download, Sync)
-def download(url: str, folder: str) -> list[str]:
+# urls: dict with url: folder and mode
+def download(urls: dict[str, dict[str, str]]) -> list[str]:
     # create out folder if it doesn't exist
     try:
         os.mkdir('out')
@@ -1014,22 +1143,24 @@ def download(url: str, folder: str) -> list[str]:
     # add IDs of already finished files to a list
     # dict of IDs and filenames of videos that are already present in the output folder and where metadata has been set
     already_finished: dict[str, str] = {}
-    folder = folder or 'out'
-    for f in os.listdir(folder):
-        if f.split('.')[-1] == 'mp3':
-            try:
-                id3 = ID3(os.path.join(folder, f))
-                video_id = id3.getall('TPUB')[0].text[0]
-                if video_id:
-                    already_finished[video_id] = f
-            except IndexError:
-                print(f'[Debug] {f} has no TPUB-Frame set')
+    for folder in [e['folder'] for e in urls.values() if 'folder' in e and e['folder']]:
+        if os.path.isdir(folder):
+            for f in os.listdir(folder):
+                if f.split('.')[-1] == 'mp3':
+                    try:
+                        id3 = ID3(os.path.join(folder, f))
+                        video_id = id3.getall('TPUB')[0].text[0]
+                        if video_id:
+                            already_finished[video_id] = os.path.join(folder, f)
+                    except IndexError:
+                        print(f'[Debug] {f} has no TPUB-Frame set')
 
     # prevent windows sleep mode
     ctypes.windll.kernel32.SetThreadExecutionState(0x80000001)
 
     def get_info_dict(info_dict):
-        Globals.files[info_dict['id']] = generate_metadata_choices(info_dict)
+        id = info_dict['id']
+        Globals.files[id].update(generate_metadata_choices(info_dict, Globals.files[id]['mode']))
         out.append(info_dict['id'])
 
         # don't download if file is already present
@@ -1050,110 +1181,94 @@ def download(url: str, folder: str) -> list[str]:
     }
 
     ydl = youtube_dl.YoutubeDL(ydl_opts)
+    video_queue = queue.Queue()
+    # list of ids that are already downloaded but still in the playlist, so they shouldn't be deleted when syncing
+    dont_delete: list[str] = []
 
-    # obtain info to decide between video or playlist download
-    info = ydl.extract_info(url, process=False)
+    def download_video(video_id):
+        try:
+            ydl.extract_info('https://youtu.be/' + video_id)
+        except youtube_dl.DownloadError as e:
+            Globals.app.print_info('multithreading_download', e)
+            video_queue.put(video_id)
 
-    # reset if info is empty
-    if not info:
-        Globals.app.reset()
-        ctypes.windll.kernel32.SetThreadExecutionState(0x80000000)
-        return
-
-    # playlist download
-    if info['webpage_url_basename'] == 'playlist':
-        def download_from_playlist(video_id):
-            try:
-                ydl.extract_info('https://youtu.be/' + video_id)
-                Globals.files[video_id]['album'].append(info['title'])
-                Globals.files[video_id]['track'].append(str(ids.index(video_id) + 1))
-            except youtube_dl.DownloadError as e:
-                Globals.app.print_info('multithreading_download', e)
-                video_queue.put(video_id)
-
-        def threading_worker():
-            while True:
-                try:
-                    id = video_queue.get(block=False)
-                    download_from_playlist(id)
-                    video_queue.task_done()
-                except queue.Empty:
-                    break
-
-        entries = list(info['entries'])
-
-        # list of filenames that are already downloaded but still in the playlist, so they shouldn't be deleted when syncing
-        dont_delete: list[str] = [e['id'] for e in entries if e['id'] in already_finished]
-        ids = [e['id'] for e in entries if e['id'] not in already_finished]
-
-        video_queue = queue.Queue()
-        for id in ids:
-            video_queue.put(id)
-
-        threads = []
-        for i in range(Globals.num_threads):
-            t = threading.Thread(target=threading_worker)
-            t.start()
-            threads.append(t)
-
-        playlist_title = info['title']
-        playlist_length = len(ids)
-        while active_threads := len([t for t in threads if t.is_alive()]):
-            queue_length = video_queue.qsize()
-            videos_done = playlist_length - queue_length - active_threads
-
-            progress = videos_done / playlist_length * 100
-            progress_text = f'Downloading playlist "{playlist_title}" with {active_threads} thread' + \
-                            ('s' if active_threads != 1 else '') + \
-                            f', {videos_done}/{playlist_length} ({round(progress, 1)}%) finished, ' \
-                            f'{sec_to_min((datetime.now() - start).seconds)} elapsed'
-
-            Globals.app.update_progress(progress, progress_text)
-            sleep(0.1)
-
-        # delete all files from the destination folder that are not in the dont_delete list
-        # (which means they were removed from the playlist) (only in sync mode)
-        if already_finished and Globals.app.get_download_mode() == 'sync':
-            for f in already_finished.values():
-                if f not in dont_delete:
-                    try:
-                        if Globals.app.sync_ask_delete.get() == '0' or messagebox.askyesno(title='Delete file?',
-                                                                                           icon='question',
-                                                                                           message=f'The video connected to "{f}" '
-                                                                                                   f'is not in the playlist '
-                                                                                                   f'anymore. Do you want to '
-                                                                                                   f'delete the file?'):
-                            os.remove(os.path.join(folder, f))
-                            Globals.app.print_info('sync', f'Deleting {f}')
-                    except OSError as e:
-                        Globals.app.print_info('sync', e)
-
-    # video download
-    else:
-        def video_hook(d):
-            file = list(Globals.files.values())[-1]
-
-            match d['status']:
-                case 'downloading':
-                    title = file['originaltitle'] if 'originaltitle' in file else file['title']
-
-                    progress = d['downloaded_bytes'] / d['total_bytes'] * 100
-                    progress_content = (
-                        f"Downloading video {title}, {round(progress)}% finished, {sec_to_min(d['eta'])} left"
-                    )
-                    Globals.app.update_progress(progress, progress_content)
-                case 'finished':
-                    Globals.app.update_progress(100, 'Converting...')
-
-        ydl_opts['progress_hooks'] = [video_hook]
-        ydl = youtube_dl.YoutubeDL(ydl_opts)
+    def threading_worker():
         while True:
             try:
-                ydl.extract_info(url)
+                id = video_queue.get(block=False)
+                download_video(id)
+                video_queue.task_done()
+            except queue.Empty:
+                break
+
+    for url in urls:
+        # obtain info to decide between video or playlist download
+        info = {}
+        while True:
+            try:
+                info = ydl.extract_info(url, process=False)
                 break
             except youtube_dl.DownloadError as e:
                 Globals.app.print_info('download', str(e) + " (Trying again)")
                 continue
+
+        if info:
+            # playlist
+            if info['webpage_url_basename'] == 'playlist':
+                entries = list(info['entries'])
+                all_ids = [e['id'] for e in entries]
+
+                dont_delete += [e['id'] for e in entries if e['id'] in already_finished]
+                ids = [e['id'] for e in entries if e['id'] not in already_finished]
+
+                for id in ids:
+                    Globals.files[id] = {'folder': urls[url]['folder'], 'mode': urls[url]['mode'],
+                                         'playlist_index': all_ids.index(id) + 1}
+                    video_queue.put(id)
+            # video
+            else:
+                Globals.files[info['id']] = {'folder': urls[url]['folder'], 'mode': urls[url]['mode']}
+                video_queue.put(info['id'])
+
+    total_length = video_queue.qsize()
+
+    threads = []
+    for i in range(Globals.num_threads):
+        t = threading.Thread(target=threading_worker)
+        t.start()
+        threads.append(t)
+
+    while active_threads := len([t for t in threads if t.is_alive()]):
+        queue_length = video_queue.qsize()
+        videos_done = total_length - queue_length - active_threads
+
+        progress = videos_done / total_length * 100
+        progress_text = f'Downloading {total_length} videos with {active_threads} threads' + \
+                        f', {videos_done}/{total_length} ({round(progress, 1)}%) finished, ' \
+                        f'{sec_to_min((datetime.now() - start).seconds)} elapsed'
+
+        Globals.app.update_progress(progress, progress_text)
+        sleep(0.1)
+
+    # delete all files from the destination folder that are not in the dont_delete list
+    # (which means they were removed from the playlist) (only in sync mode)
+    if already_finished and Globals.app.get_download_mode() == 'sync':
+        for id in already_finished:
+            filename = already_finished[id]
+            if id not in dont_delete and filename not in Globals.files_keep:
+                try:
+                    if Globals.app.sync_ask_delete.get() == '0' or messagebox.askyesno(title='Delete file?',
+                                                                                       icon='question',
+                                                                                       message=f'The video connected to "{filename}" '
+                                                                                               f'is not in the playlist '
+                                                                                               f'anymore. Do you want to '
+                                                                                               f'delete the file?'):
+                        os.remove(filename)
+                        Globals.app.print_info('sync', f'Deleting {filename}')
+                    else:
+                        Globals.files_keep.append(filename)
+                except OSError as e:
+                    Globals.app.print_info('sync', e)
 
     Globals.app.update_progress(0, f"Downloaded {len(Globals.files)} video{'s' if len(Globals.files) != 1 else ''} in "
                                    f"{sec_to_min((datetime.now() - start).seconds)}")
@@ -1271,7 +1386,8 @@ def download_metadata():
     }
 
     ydl = youtube_dl.YoutubeDL(ydl_opts)
-    info = ydl.extract_info(Globals.saved_urls[url]['url'] if url in Globals.saved_urls else url, download=False,
+    info = ydl.extract_info(Globals.library['Playlists'][url]['url'] if url in Globals.library['Playlists'] else url,
+                            download=False,
                             process=mode == 'metadata')
 
     if info:
