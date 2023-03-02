@@ -345,7 +345,7 @@ class LibraryList:
                 'children']
             urls = [[e['url'] for e in f['children']] for f in folders if f['name'] == self.library_key][0]
             new = [url for url in urls if url not in self.library_values[3].get()]
-            print(new)
+            print(f'New: {new}')
 
         ydl = youtube_dl.YoutubeDL({'logger': Logger()})
 
@@ -382,15 +382,21 @@ class LibraryList:
                             print(f'[Debug] {f} has no TPUB-Frame set')
 
             info = ydl.extract_info(url, process=False)
-            playlist_ids = [e['id'] for e in info['entries']]
+            playlist_ids = list(dict.fromkeys([e['id'] for e in info['entries']]))
 
-            not_downloaded_urls = [e for e in playlist_ids if e not in downloaded_ids]
-            print(f'Not downloaded: {not_downloaded_urls}')
-            if sorted(playlist_ids) != sorted(downloaded_ids):
+            not_downloaded_ids = [e for e in playlist_ids if e not in downloaded_ids]
+
+            print(f'Playlist:                     {sorted(playlist_ids)}')
+            print(f'Downloaded:                   {sorted(downloaded_ids)}')
+            print(f'Playlist, but not downloaded: {sorted(not_downloaded_ids)}')
+            print(f'Downloaded, but not playlist: {sorted([e for e in downloaded_ids if e not in playlist_ids])}')
+
+            is_synced = sorted(playlist_ids) == sorted(downloaded_ids)
+            if not is_synced:
                 out[url] = {'folder': folder, 'mode': mode}
 
             synced = list(self.library_values[2].get())
-            synced[i] = 'Yes' if all([e in downloaded_ids for e in playlist_ids]) else 'No'
+            synced[i] = 'Yes' if is_synced else 'No'
             self.library_values[2].set(synced)
 
             videos = list(self.library_values[1].get())
@@ -813,7 +819,10 @@ class App:
                             if not os.path.isdir(Globals.files[video_id]['folder']):
                                 os.mkdir(Globals.files[video_id]['folder'])
 
-                            shutil.move(os.path.join('out', f), os.path.join(Globals.files[video_id]['folder'], f))
+                            if not os.path.isfile(os.path.join(Globals.files[video_id]['folder'], f)):
+                                shutil.move(os.path.join('out', f), os.path.join(Globals.files[video_id]['folder'], f))
+                            else:
+                                self.print_info('sync', f'The file {os.path.join(Globals.files[video_id]["folder"], f)} already exists')
                             self.print_info('sync', f'Moving {f} to {Globals.files[video_id]["folder"]}')
                     except IndexError as e:
                         print(f'[Debug] {f} can not be moved: ' + str(e))
@@ -1140,10 +1149,10 @@ def download(urls: dict[str, dict[str, str]]) -> list[str]:
     start = datetime.now()
     out: list[str] = []  # list of ids on which metadata has to be set
 
-    # add IDs of already finished files to a list
-    # dict of IDs and filenames of videos that are already present in the output folder and where metadata has been set
-    already_finished: dict[str, str] = {}
+    # folder name: dict of IDs and filenames: videos that are already present in the folder and where metadata has been set
+    already_finished: dict[str, dict[str, str]] = {}
     for folder in [e['folder'] for e in urls.values() if 'folder' in e and e['folder']]:
+        already_finished[folder] = {}
         if os.path.isdir(folder):
             for f in os.listdir(folder):
                 if f.split('.')[-1] == 'mp3':
@@ -1151,7 +1160,7 @@ def download(urls: dict[str, dict[str, str]]) -> list[str]:
                         id3 = ID3(os.path.join(folder, f))
                         video_id = id3.getall('TPUB')[0].text[0]
                         if video_id:
-                            already_finished[video_id] = os.path.join(folder, f)
+                            already_finished[folder][video_id] = os.path.join(folder, f)
                     except IndexError:
                         print(f'[Debug] {f} has no TPUB-Frame set')
 
@@ -1182,8 +1191,8 @@ def download(urls: dict[str, dict[str, str]]) -> list[str]:
 
     ydl = youtube_dl.YoutubeDL(ydl_opts)
     video_queue = queue.Queue()
-    # list of ids that are already downloaded but still in the playlist, so they shouldn't be deleted when syncing
-    dont_delete: list[str] = []
+    # dict of folder and list of ids that are already downloaded but still in the playlist, so they shouldn't be deleted when syncing
+    dont_delete: dict[str, list[str]] = {}
 
     def download_video(video_id):
         try:
@@ -1218,8 +1227,9 @@ def download(urls: dict[str, dict[str, str]]) -> list[str]:
                 entries = list(info['entries'])
                 all_ids = [e['id'] for e in entries]
 
-                dont_delete += [e['id'] for e in entries if e['id'] in already_finished]
-                ids = [e['id'] for e in entries if e['id'] not in already_finished]
+                folder = urls[url]['folder']
+                dont_delete[folder] = [e['id'] for e in entries if e['id'] in already_finished[folder]]
+                ids = [e['id'] for e in entries if e['id'] not in already_finished[folder]]
 
                 for id in ids:
                     Globals.files[id] = {'folder': urls[url]['folder'], 'mode': urls[url]['mode'],
@@ -1253,22 +1263,23 @@ def download(urls: dict[str, dict[str, str]]) -> list[str]:
     # delete all files from the destination folder that are not in the dont_delete list
     # (which means they were removed from the playlist) (only in sync mode)
     if already_finished and Globals.app.get_download_mode() == 'sync':
-        for id in already_finished:
-            filename = already_finished[id]
-            if id not in dont_delete and filename not in Globals.files_keep:
-                try:
-                    if Globals.app.sync_ask_delete.get() == '0' or messagebox.askyesno(title='Delete file?',
-                                                                                       icon='question',
-                                                                                       message=f'The video connected to "{filename}" '
-                                                                                               f'is not in the playlist '
-                                                                                               f'anymore. Do you want to '
-                                                                                               f'delete the file?'):
-                        os.remove(filename)
-                        Globals.app.print_info('sync', f'Deleting {filename}')
-                    else:
-                        Globals.files_keep.append(filename)
-                except OSError as e:
-                    Globals.app.print_info('sync', e)
+        for folder in already_finished:
+            for id in already_finished[folder]:
+                filename = already_finished[folder][id]
+                if id not in dont_delete[folder] and filename not in Globals.files_keep:
+                    try:
+                        if Globals.app.sync_ask_delete.get() == '0' or messagebox.askyesno(title='Delete file?',
+                                                                                           icon='question',
+                                                                                           message=f'The video connected to "{filename}" '
+                                                                                                   f'is not in the playlist '
+                                                                                                   f'anymore. Do you want to '
+                                                                                                   f'delete the file?'):
+                            os.remove(filename)
+                            Globals.app.print_info('sync', f'Deleting {filename}')
+                        else:
+                            Globals.files_keep.append(filename)
+                    except OSError as e:
+                        Globals.app.print_info('sync', e)
 
     Globals.app.update_progress(0, f"Downloaded {len(Globals.files)} video{'s' if len(Globals.files) != 1 else ''} in "
                                    f"{sec_to_min((datetime.now() - start).seconds)}")
