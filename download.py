@@ -27,6 +27,7 @@ os.chdir(os.path.dirname(os.path.realpath(__file__)))
 
 class Globals:
     folder: str = ''  # folder to sync with
+    # id: {title, artist, album, track, type, number, key, work, comment, id, folder, mode, playlist_index}
     files: dict[str, dict[str, Union[str, list[str]]]] = {}
     metadata_file: dict[str, dict[str, str]] = {}
     library: dict[str, dict[str, dict[str, str]]] = {}
@@ -282,6 +283,7 @@ class LibraryList:
         self.default_mode = default_mode
         self.row = row
 
+        self.title = ttk.Label(root, text=self.library_key)
         self.library_names = [
             ttk.Label(root, text='Name'),
             ttk.Label(root, text='Videos'),
@@ -316,16 +318,17 @@ class LibraryList:
         self.library_refresh_button = ttk.Button(root, text='Refresh', command=self.library_refresh)
         self.library_sync_button = ttk.Button(root, text='Sync', command=self.library_sync)
 
+        self.title.grid(row=row * 4, column=0, sticky='w')
         for i, w in enumerate(self.library_names):
-            w.grid(row=row * 3, column=i, sticky='ew')
+            w.grid(row=row * 4 + 1, column=i, sticky='ew')
 
         for i, w in enumerate(self.library):
-            w.grid(row=row * 3 + 1, column=i, sticky='ew')
+            w.grid(row=row * 4 + 2, column=i, sticky='ew')
 
-        self.scrollbar.grid(row=row * 3, column=6, sticky='ns', rowspan=2)
+        self.scrollbar.grid(row=row * 4, column=6, sticky='ns', rowspan=2)
 
-        self.library_refresh_button.grid(row=row * 3 + 2, column=0, sticky='ew')
-        self.library_sync_button.grid(row=row * 3 + 2, column=1, sticky='ew')
+        self.library_refresh_button.grid(row=row * 4 + 3, column=0, sticky='ew')
+        self.library_sync_button.grid(row=row * 4 + 3, column=1, sticky='ew')
 
     def scrollbar_move(self, a, b):
         for box in self.library:
@@ -568,6 +571,8 @@ class App:
         self.metadata_button = ttk.Button(self.metadata_labelframe, text='Apply metadata',
                                           command=self.apply_all_metadata,
                                           state='disabled')
+        self.change_metadata_button = ttk.Button(self.metadata_labelframe, text='Change metadata',
+                                                 command=self.change_metadata)
 
         # error message widgets
         self.error_text = ScrolledText(self.error_frame, wrap=tkinter.WORD, height=10, state='disabled')
@@ -610,6 +615,7 @@ class App:
         self.metadata_canvas.pack(side=LEFT, expand=True, fill=X)
         self.metadata_scrollbar.pack(side=RIGHT, fill=Y)
         self.metadata_button.pack(before=self.metadata_canvas, side=BOTTOM, anchor='w')
+        self.change_metadata_button.pack(before=self.metadata_canvas, side=BOTTOM, anchor='e')
 
         self.error_frame.grid(row=2, column=0, sticky='NEW', padx=5, pady=5)
         self.error_text.grid(row=0, column=0, columnspan=self.width, sticky='EW', pady=(5, 0))
@@ -744,6 +750,8 @@ class App:
         selection = Globals.metadata_selections.get()
         self.metadata_mode.set(selection[0]['mode'])
 
+        if Globals.metadata_selection:
+            Globals.metadata_selection.reset()
         Globals.metadata_selection = MetadataSelection(self.metadata_frame, selection, selection[0]['mode'])
         self.update_metadata_selection()
         self.enable_widgets(self.metadata_button)
@@ -775,6 +783,22 @@ class App:
             self.update_metadata_selection()
         else:
             self.reset()
+
+    def change_metadata(self):
+        input = filedialog.askopenfilenames()
+        print(input)
+
+        for f in input:
+            id3 = ID3(f)
+            video_id = id3.getall('TPUB')[0].text[0]
+            if video_id:
+                Globals.files[video_id] = {'folder': os.path.dirname(f), 'mode': Globals.app.get_metadata_mode(), 'old_filename': f}
+
+                ydl = youtube_dl.YoutubeDL({'logger': Logger()})
+                info = ydl.extract_info(video_id, download=False)
+                Globals.files[video_id].update(generate_metadata_choices(info, Globals.app.get_metadata_mode))
+
+        self.enable_metadata_selection()
 
     def save_url(self):
         url = simpledialog.askstring(title='Save URL',
@@ -1291,8 +1315,10 @@ def download(urls: dict[str, dict[str, str]]) -> list[str]:
 
 
 def apply_metadata(id, data):
-    path = os.path.join('out', id + '.mp3')
-    filename = os.path.join('out', safe_filename(f'{data["artist"]} - {data["title"]}.mp3'))
+    old_filename = data['old_filename'] if 'old_filename' in data else os.path.join('out', id + '.mp3')
+
+    filename = safe_filename(f'{data["artist"]} - {data["title"]}.mp3')
+    new_filename = os.path.join(data['folder'], filename) if 'old_filename' in data else os.path.join('out', filename)
 
     # cut mp3 in classical mode
     if 'cut' in data:
@@ -1314,11 +1340,11 @@ def apply_metadata(id, data):
                         f.write("file 's.mp3'\n")
                         f.write(f'outpoint {split_plus[0]}\n')  # outpoint 3
 
-                        f.write(f"file '{path}'\n")
+                        f.write(f"file '{old_filename}'\n")
                         if split_plus[1]:
                             f.write(f'inpoint {split_plus[1]}\n')  # inpoint 5
                     else:
-                        f.write(f"file '{path}'\n")
+                        f.write(f"file '{old_filename}'\n")
                         if split_space[0]:
                             f.write(f'inpoint {split_space[0]}\n')  # inpoint 1:40
 
@@ -1337,19 +1363,19 @@ def apply_metadata(id, data):
 
             if highest > 0:
                 subprocess.run(f'ffmpeg.exe -filter_complex '
-                               f'anullsrc=sample_rate={AudioSegment.from_mp3(path).frame_rate} -t {highest} s.mp3')
+                               f'anullsrc=sample_rate={AudioSegment.from_mp3(old_filename).frame_rate} -t {highest} s.mp3')
 
             # run ffmpeg to cut the file
-            subprocess.run(f'ffmpeg.exe -f concat -safe 0 -i cut.info -c copy "{filename}"')
-            send2trash(path)
+            subprocess.run(f'ffmpeg.exe -f concat -safe 0 -i cut.info -c copy "{new_filename}"')
+            send2trash(old_filename)
             if highest > 0:
                 os.remove('s.mp3')
-            path = filename
+            old_filename = new_filename
         except Exception as e:
             Globals.app.print_info('cut', e)
 
     try:
-        id3 = ID3(path)
+        id3 = ID3(old_filename)
         id3.add(TPE1(text=data['artist']))
         id3.add(TIT2(text=data['title']))
         id3.add(TPUB(text=id))
@@ -1367,7 +1393,7 @@ def apply_metadata(id, data):
         id3.save()
 
         if 'cut' not in data:
-            os.rename(path, filename)
+            os.rename(old_filename, new_filename)
     except MutagenError as e:
         Globals.app.print_info('mutagen', e)
     except OSError as e:
