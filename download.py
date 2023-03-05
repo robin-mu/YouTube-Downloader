@@ -48,7 +48,7 @@ class Globals:
         with open('files_keep.json', 'r', encoding='utf-8') as f:
             files_keep = json.load(f)
     except Exception as e:
-        print('[json]', e)
+        print('[json]', str(e))
 
     classical_work_format_opus: list[str] = ['Barber', 'Beethoven', 'Brahms', 'Chopin', 'Dvořák', 'Grieg',
                                              'Fauré', 'Berlioz', 'Mendelssohn', 'Paganini', 'Prokofiev',
@@ -91,15 +91,20 @@ class Globals:
         'Faure': 'Fauré'
     }
 
-    classical_types: list[str] = ['Sonata', 'Sonatina', 'Suite', 'Minuet', 'Prelude', 'Fugue', 'Toccata',
-                                  'Concerto', 'Symphony', 'Trio', 'Dance', 'Waltz', 'Ballade', 'Etude', 'Impromptu',
-                                  'Mazurka', 'Nocturne', 'Polonaise', 'Rondo', 'Scherzo', 'Serenade', 'March',
-                                  'Polka', 'Rhapsody', 'Quintet', 'Variations', 'Canon', 'Caprice',
-                                  'Moment Musicaux', 'Gymnopédie', 'Gnossienne', 'Ballet']
+    classical_before_type: list[str] = ['Piano', 'Violin', 'Cello', 'Horn', 'Trumpet', 'Flute',
+                                        'Hungarian', 'Italian', 'German', 'French']
+
+    classical_types: list[str] = ['Sonata', 'Sonatina', 'Suite', 'Minuet', 'Prelude and Fugue', 'Prelude', 'Fugue',
+                                  'Toccata', 'Concerto', 'Symphony', 'String Quartet', 'Trio', 'Dance', 'Waltz',
+                                  'Ballade', 'Etude', 'Impromptu', 'Mazurka', 'Nocturne', 'Polonaise', 'Rondo',
+                                  'Scherzo', 'Serenade', 'March', 'Polka', 'Rhapsody', 'Quintet', 'Variations', 'Canon',
+                                  'Caprice', 'Moment Musicaux', 'Gymnopédie', 'Gnossienne', 'Ballet', 'Bagatelle',
+                                  'Arabesque', 'Humoresque', 'Romance', 'Sicilienne', 'Pavane', 'Requiem', 'Fantasia']
     classical_types_real: dict[str, str] = {
         'Sonate': 'Sonata',
         'Sonatine': 'Sonatina',
         'Menuett': 'Minuet',
+        'Präludium und Fuge': 'Prelude and Fugue',
         'Präludium': 'Prelude',
         'Fuge': 'Fugue',
         'Konzert': 'Concerto',
@@ -787,6 +792,8 @@ class App:
     def change_metadata(self):
         input = filedialog.askopenfilenames()
         print(input)
+        if not input:
+            return
 
         for f in input:
             id3 = ID3(f)
@@ -796,7 +803,7 @@ class App:
 
                 ydl = youtube_dl.YoutubeDL({'logger': Logger()})
                 info = ydl.extract_info(video_id, download=False)
-                Globals.files[video_id].update(generate_metadata_choices(info, Globals.app.get_metadata_mode))
+                Globals.files[video_id].update(generate_metadata_choices(info, Globals.app.get_metadata_mode()))
 
         self.enable_metadata_selection()
 
@@ -1081,22 +1088,28 @@ def generate_metadata_choices(metadata: dict[str, Any], mode: str) -> dict[str, 
     comment_choices: list[str] = ([title.split('"')[1]] if title.count('"') >= 2 else []) + \
                                  [i.split(')')[0] for i in title.split('(') if ')' in i] if '(' in title else []
     if mode == 'classical':
+        title_lower = title.lower()
+        title_words = title_lower.split()
         # look for known composer in title, but spelled differently
         for c in Globals.classical_composers_real:
-            if c.lower() in title.lower():
+            if c.lower() in title_lower:
                 composer_choices.append(Globals.classical_composers_real[c])
         for c in Globals.classical_composers:
-            if c.lower() in title.lower() and c not in composer_choices:
+            if c.lower() in title_lower and c not in composer_choices:
                 composer_choices.append(c)
         for c in artist_choices:
             composer_choices.append(c)
 
         # type choices
+        for c in Globals.classical_types:
+            for i in Globals.classical_before_type:
+                if c.lower() in title_lower and title_words[title_words.index(c.lower()) - 1] == i.lower():
+                    type_choices.append(i + ' ' + c)
         for c in Globals.classical_types_real:
-            if c.lower() in title.lower():
+            if c.lower() in title_lower:
                 type_choices.append(Globals.classical_types_real[c])
         for c in Globals.classical_types:
-            if c.lower() in title.lower() and c not in type_choices:
+            if c.lower() in title_lower and c not in type_choices:
                 type_choices.append(c)
         for c in title_choices:
             type_choices.append(c)
