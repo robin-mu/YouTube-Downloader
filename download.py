@@ -91,11 +91,11 @@ class Globals:
         'Faure': 'Fauré'
     }
 
-    classical_before_type: list[str] = ['Piano', 'Violin', 'Cello', 'Horn', 'Trumpet', 'Flute',
+    classical_before_type: list[str] = ['Piano', 'String', 'Violin', 'Cello', 'Horn', 'Trumpet', 'Flute',
                                         'Hungarian', 'Italian', 'German', 'French']
 
     classical_types: list[str] = ['Sonata', 'Sonatina', 'Suite', 'Minuet', 'Prelude and Fugue', 'Prelude', 'Fugue',
-                                  'Toccata', 'Concerto', 'Symphony', 'String Quartet', 'Trio', 'Dance', 'Waltz',
+                                  'Toccata', 'Concerto', 'Symphony', 'Quartet', 'Trio', 'Dance', 'Waltz',
                                   'Ballade', 'Etude', 'Impromptu', 'Mazurka', 'Nocturne', 'Polonaise', 'Rondo',
                                   'Scherzo', 'Serenade', 'March', 'Polka', 'Rhapsody', 'Quintet', 'Variations', 'Canon',
                                   'Caprice', 'Moment Musicaux', 'Gymnopédie', 'Gnossienne', 'Ballet', 'Bagatelle',
@@ -330,7 +330,7 @@ class LibraryList:
         for i, w in enumerate(self.library):
             w.grid(row=row * 4 + 2, column=i, sticky='ew')
 
-        self.scrollbar.grid(row=row * 4, column=6, sticky='ns', rowspan=2)
+        self.scrollbar.grid(row=row * 4 + 1, column=6, sticky='ns', rowspan=2)
 
         self.library_refresh_button.grid(row=row * 4 + 3, column=0, sticky='ew')
         self.library_sync_button.grid(row=row * 4 + 3, column=1, sticky='ew')
@@ -345,7 +345,7 @@ class LibraryList:
             box.yview('moveto', a)
 
     def library_refresh(self) -> dict[str, dict[str, str]]:
-        # check bookmark file for new playlists
+        # check bookmark file for new and deleted playlists
         with open(r'C:\Users\Robin Müller\AppData\Roaming\Opera Software\Opera Stable\Bookmarks', 'r',
                   encoding='utf8') as f:
             file = json.load(f)
@@ -353,7 +353,9 @@ class LibraryList:
                 'children']
             urls = [[e['url'] for e in f['children']] for f in folders if f['name'] == self.library_key][0]
             new = [url for url in urls if url not in self.library_values[3].get()]
+            deleted_indices = [i for i, url in enumerate(self.library_values[3].get()) if url not in urls]
             print(f'New: {new}')
+            print(f'Deleted: {deleted_indices}')
 
         ydl = youtube_dl.YoutubeDL({'logger': Logger()})
 
@@ -369,6 +371,12 @@ class LibraryList:
             Globals.library[self.library_key][title] = {'url': url,
                                                         'folder': self.base_folder + '/' + safe_filename(title),
                                                         'metadata_mode': self.default_mode}
+            self.__init__(self.root, self.library_key, self.base_folder, self.default_mode, self.row)
+
+        for i in deleted_indices:
+            if messagebox.askyesno('Playlist deleted', f'The playlist {self.library_values[0].get()[i]} has been deleted. Do you want to delete the folder?'):
+                send2trash(os.path.realpath(self.library_values[4].get()[i]))
+                Globals.library[self.library_key].pop(self.library_values[0].get()[i])
             self.__init__(self.root, self.library_key, self.base_folder, self.default_mode, self.row)
 
         out = {}
@@ -389,27 +397,30 @@ class LibraryList:
                         except IndexError:
                             print(f'[Debug] {f} has no TPUB-Frame set')
 
-            info = ydl.extract_info(url, process=False)
-            playlist_ids = list(dict.fromkeys([e['id'] for e in info['entries']]))
+            try:
+                info = ydl.extract_info(url, process=False)
+                playlist_ids = list(dict.fromkeys([e['id'] for e in info['entries']]))
 
-            not_downloaded_ids = [e for e in playlist_ids if e not in downloaded_ids]
+                not_downloaded_ids = [e for e in playlist_ids if e not in downloaded_ids]
 
-            print(f'Playlist:                     {sorted(playlist_ids)}')
-            print(f'Downloaded:                   {sorted(downloaded_ids)}')
-            print(f'Playlist, but not downloaded: {sorted(not_downloaded_ids)}')
-            print(f'Downloaded, but not playlist: {sorted([e for e in downloaded_ids if e not in playlist_ids])}')
+                print(f'Playlist:                     {sorted(playlist_ids)}')
+                print(f'Downloaded:                   {sorted(downloaded_ids)}')
+                print(f'Playlist, but not downloaded: {sorted(not_downloaded_ids)}')
+                print(f'Downloaded, but not playlist: {sorted([e for e in downloaded_ids if e not in playlist_ids])}')
 
-            is_synced = sorted(playlist_ids) == sorted(downloaded_ids)
-            if not is_synced:
-                out[url] = {'folder': folder, 'mode': mode}
+                is_synced = sorted(playlist_ids) == sorted(downloaded_ids)
+                if not is_synced:
+                    out[url] = {'folder': folder, 'mode': mode}
 
-            synced = list(self.library_values[2].get())
-            synced[i] = 'Yes' if is_synced else 'No'
-            self.library_values[2].set(synced)
+                synced = list(self.library_values[2].get())
+                synced[i] = 'Yes' if is_synced else 'No'
+                self.library_values[2].set(synced)
 
-            videos = list(self.library_values[1].get())
-            videos[i] = f'Playlist: {len(playlist_ids)}, Downloaded: {len([e for e in playlist_ids if e in downloaded_ids])}, in Folder: {len(downloaded_ids)}'
-            self.library_values[1].set(videos)
+                videos = list(self.library_values[1].get())
+                videos[i] = f'Playlist: {len(playlist_ids)}, Downloaded: {len([e for e in playlist_ids if e in downloaded_ids])}, in Folder: {len(downloaded_ids)}'
+                self.library_values[1].set(videos)
+            except youtube_dl.DownloadError as e:
+                print(str(e))
 
         pprint(out)
         return out
@@ -444,17 +455,18 @@ class LibraryList:
 
     def library_sync(self):
         to_download = self.library_refresh()
-        Globals.app.download_mode.set('sync')
+        if to_download:
+            Globals.app.download_mode.set('sync')
 
-        download_thread = threading.Thread(target=lambda: download(to_download))
-        download_thread.start()
+            download_thread = threading.Thread(target=lambda: download(to_download))
+            download_thread.start()
 
-        Globals.app.notebook.select(0)
+            Globals.app.notebook.select(0)
 
-        while download_thread.is_alive():
-            Tk.update(Globals.app.root)
+            while download_thread.is_alive():
+                Tk.update(Globals.app.root)
 
-        Globals.app.enable_metadata_selection()
+            Globals.app.enable_metadata_selection()
 
 
 class App:
@@ -752,6 +764,9 @@ class App:
             if e:
                 Globals.metadata_selections.put(e)
 
+        if Globals.metadata_selections.empty():
+            return
+
         selection = Globals.metadata_selections.get()
         self.metadata_mode.set(selection[0]['mode'])
 
@@ -847,6 +862,7 @@ class App:
                         id3 = ID3(os.path.join('out', f))
                         video_id = id3.getall('TPUB')[0].text[0]
                         if video_id:
+                            print(Globals.files)
                             if not os.path.isdir(Globals.files[video_id]['folder']):
                                 os.mkdir(Globals.files[video_id]['folder'])
 
@@ -1089,7 +1105,7 @@ def generate_metadata_choices(metadata: dict[str, Any], mode: str) -> dict[str, 
                                  [i.split(')')[0] for i in title.split('(') if ')' in i] if '(' in title else []
     if mode == 'classical':
         title_lower = title.lower()
-        title_words = title_lower.split()
+        title_words = [lower_and_remove_symbols(i) for i in title_lower.split()]
         # look for known composer in title, but spelled differently
         for c in Globals.classical_composers_real:
             if c.lower() in title_lower:
@@ -1103,7 +1119,7 @@ def generate_metadata_choices(metadata: dict[str, Any], mode: str) -> dict[str, 
         # type choices
         for c in Globals.classical_types:
             for i in Globals.classical_before_type:
-                if c.lower() in title_lower and title_words[title_words.index(c.lower()) - 1] == i.lower():
+                if c.lower() in title_lower and title_words[title_words.index(c.split()[0].lower()) - 1] == i.lower():
                     type_choices.append(i + ' ' + c)
         for c in Globals.classical_types_real:
             if c.lower() in title_lower:
@@ -1182,6 +1198,9 @@ def download(urls: dict[str, dict[str, str]]) -> list[str]:
         os.mkdir('out')
     except OSError:
         pass
+
+    if not urls:
+        return []
 
     start = datetime.now()
     out: list[str] = []  # list of ids on which metadata has to be set
