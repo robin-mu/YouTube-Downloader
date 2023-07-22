@@ -16,7 +16,7 @@ from tkinter.scrolledtext import ScrolledText
 from typing import Any, Union
 from pydub import AudioSegment
 
-import youtube_dl
+import yt_dlp
 from mutagen import MutagenError
 from mutagen.id3 import ID3, TIT2, TPE1, TPUB, TALB, TRCK, TCON
 from send2trash import send2trash
@@ -33,7 +33,7 @@ class Globals:
     library: dict[str, dict[str, dict[str, str]]] = {}
     files_keep: list[
         str] = []  # files whose corresponding videos have been removed from the playlist, but where the file should not be deleted
-    num_threads: int = 100
+    num_threads: int = 10
     metadata_selection = None
     metadata_names: list[ttk.Widget] = []
     metadata_selections = queue.Queue()
@@ -352,12 +352,13 @@ class LibraryList:
             folders = [e for e in file['roots']['custom_root']['userRoot']['children'] if e['name'] == 'Music'][0][
                 'children']
             urls = [[e['url'] for e in f['children']] for f in folders if f['name'] == self.library_key][0]
+            print(urls)
             new = [url for url in urls if url not in self.library_values[3].get()]
             deleted_indices = [i for i, url in enumerate(self.library_values[3].get()) if url not in urls]
             print(f'New: {new}')
             print(f'Deleted: {deleted_indices}')
 
-        ydl = youtube_dl.YoutubeDL({'logger': Logger()})
+        ydl = yt_dlp.YoutubeDL({'logger': Logger()})
 
         for url in new:
             info = ydl.extract_info(url, process=False)
@@ -373,14 +374,20 @@ class LibraryList:
                                                         'metadata_mode': self.default_mode}
             self.__init__(self.root, self.library_key, self.base_folder, self.default_mode, self.row)
 
+        to_delete = []
         for i in deleted_indices:
             if messagebox.askyesno('Playlist deleted', f'The playlist {self.library_values[0].get()[i]} has been deleted. Do you want to delete the folder?'):
                 send2trash(os.path.realpath(self.library_values[4].get()[i]))
-                Globals.library[self.library_key].pop(self.library_values[0].get()[i])
-            self.__init__(self.root, self.library_key, self.base_folder, self.default_mode, self.row)
+                to_delete.append(i)
+
+        for i in to_delete:
+            Globals.library[self.library_key].pop(self.library_values[0].get()[i])
+
+        self.__init__(self.root, self.library_key, self.base_folder, self.default_mode, self.row)
 
         out = {}
         for i in range(len(self.library_values[3].get())):
+            name = self.library_values[0].get()[i]
             url = self.library_values[3].get()[i]
             folder = self.library_values[4].get()[i]
             mode = self.library_values[5].get()[i]
@@ -391,11 +398,13 @@ class LibraryList:
                     if os.path.join(folder, f) not in Globals.files_keep and f.split('.')[-1] == 'mp3':
                         try:
                             id3 = ID3(os.path.join(folder, f))
-                            video_id = id3.getall('TPUB')[0].text[0]
-                            if video_id:
-                                downloaded_ids.append(video_id)
-                        except IndexError:
-                            print(f'[Debug] {f} has no TPUB-Frame set')
+                            tpub = id3.getall('TPUB')
+                            if tpub:
+                                video_id = tpub[0].text[0]
+                                if video_id:
+                                    downloaded_ids.append(video_id)
+                        except IndexError as e:
+                            Globals.app.print_info('mutagen_tpub', str(e))
 
             try:
                 info = ydl.extract_info(url, process=False)
@@ -403,14 +412,18 @@ class LibraryList:
 
                 not_downloaded_ids = [e for e in playlist_ids if e not in downloaded_ids]
 
-                print(f'Playlist:                     {sorted(playlist_ids)}')
-                print(f'Downloaded:                   {sorted(downloaded_ids)}')
-                print(f'Playlist, but not downloaded: {sorted(not_downloaded_ids)}')
-                print(f'Downloaded, but not playlist: {sorted([e for e in downloaded_ids if e not in playlist_ids])}')
-
                 is_synced = sorted(playlist_ids) == sorted(downloaded_ids)
                 if not is_synced:
                     out[url] = {'folder': folder, 'mode': mode}
+                    Globals.app.print_info('sync', f'Playlist {name} is not synced:')
+                    if not_downloaded_ids:
+                        Globals.app.print_info('sync', f'   In playlist, but not downloaded: {sorted(not_downloaded_ids)}')
+                    downloaded_but_not_in_playlist = [e for e in downloaded_ids if e not in playlist_ids]
+                    if downloaded_but_not_in_playlist:
+                        Globals.app.print_info('sync', f'   Downloaded, but not in playlist: {sorted(downloaded_but_not_in_playlist)}')
+
+                print(f'Playlist:   {sorted(playlist_ids)}')
+                print(f'Downloaded: {sorted(downloaded_ids)}')
 
                 synced = list(self.library_values[2].get())
                 synced[i] = 'Yes' if is_synced else 'No'
@@ -419,7 +432,7 @@ class LibraryList:
                 videos = list(self.library_values[1].get())
                 videos[i] = f'Playlist: {len(playlist_ids)}, Downloaded: {len([e for e in playlist_ids if e in downloaded_ids])}, in Folder: {len(downloaded_ids)}'
                 self.library_values[1].set(videos)
-            except youtube_dl.DownloadError as e:
+            except yt_dlp.DownloadError as e:
                 print(str(e))
 
         pprint(out)
@@ -745,7 +758,7 @@ class App:
         self.disable_download_widgets()
 
         download_thread = threading.Thread(
-            target=lambda url=url, folder=Globals.folder, mode=self.metadata_mode: download(
+            target=lambda url=url, folder=Globals.folder, mode=self.metadata_mode.get(): download(
                 {url: {'folder': folder, 'mode': mode}}))
         download_thread.start()
 
@@ -816,7 +829,7 @@ class App:
             if video_id:
                 Globals.files[video_id] = {'folder': os.path.dirname(f), 'mode': Globals.app.get_metadata_mode(), 'old_filename': f}
 
-                ydl = youtube_dl.YoutubeDL({'logger': Logger()})
+                ydl = yt_dlp.YoutubeDL({'logger': Logger()})
                 info = ydl.extract_info(video_id, download=False)
                 Globals.files[video_id].update(generate_metadata_choices(info, Globals.app.get_metadata_mode()))
 
@@ -862,7 +875,6 @@ class App:
                         id3 = ID3(os.path.join('out', f))
                         video_id = id3.getall('TPUB')[0].text[0]
                         if video_id:
-                            print(Globals.files)
                             if not os.path.isdir(Globals.files[video_id]['folder']):
                                 os.mkdir(Globals.files[video_id]['folder'])
 
@@ -988,7 +1000,7 @@ class Logger(object):
         Globals.app.print_download_info(msg)
 
     def warning(self, msg):
-        Globals.app.print_info('warning', msg)
+        print('[warning]', msg)
 
     def error(self, msg):
         Globals.app.print_info('error', msg)
@@ -1214,11 +1226,13 @@ def download(urls: dict[str, dict[str, str]]) -> list[str]:
                 if f.split('.')[-1] == 'mp3':
                     try:
                         id3 = ID3(os.path.join(folder, f))
-                        video_id = id3.getall('TPUB')[0].text[0]
-                        if video_id:
-                            already_finished[folder][video_id] = os.path.join(folder, f)
-                    except IndexError:
-                        print(f'[Debug] {f} has no TPUB-Frame set')
+                        tpub = id3.getall('TPUB')
+                        if tpub:
+                            video_id = tpub[0].text[0]
+                            if video_id:
+                                already_finished[folder][video_id] = os.path.join(folder, f)
+                    except IndexError as e:
+                        Globals.app.print_info('mutagen_tpub', str(e))
 
     # prevent windows sleep mode
     ctypes.windll.kernel32.SetThreadExecutionState(0x80000001)
@@ -1242,10 +1256,11 @@ def download(urls: dict[str, dict[str, str]]) -> list[str]:
         }],
         'match_filter': get_info_dict,
         'logger': Logger(),
-        'default_search': 'ytsearch'
+        'default_search': 'ytsearch',
+        'compat_opts': ['no-youtube-unavailable-videos']
     }
 
-    ydl = youtube_dl.YoutubeDL(ydl_opts)
+    ydl = yt_dlp.YoutubeDL(ydl_opts)
     video_queue = queue.Queue()
     # dict of folder and list of ids that are already downloaded but still in the playlist, so they shouldn't be deleted when syncing
     dont_delete: dict[str, list[str]] = {}
@@ -1253,7 +1268,7 @@ def download(urls: dict[str, dict[str, str]]) -> list[str]:
     def download_video(video_id):
         try:
             ydl.extract_info('https://youtu.be/' + video_id)
-        except youtube_dl.DownloadError as e:
+        except yt_dlp.DownloadError as e:
             Globals.app.print_info('multithreading_download', e)
             video_queue.put(video_id)
 
@@ -1273,7 +1288,7 @@ def download(urls: dict[str, dict[str, str]]) -> list[str]:
             try:
                 info = ydl.extract_info(url, process=False)
                 break
-            except youtube_dl.DownloadError as e:
+            except yt_dlp.DownloadError as e:
                 Globals.app.print_info('download', str(e) + " (Trying again)")
                 continue
 
@@ -1454,7 +1469,7 @@ def download_metadata():
         'default_search': 'ytsearch'
     }
 
-    ydl = youtube_dl.YoutubeDL(ydl_opts)
+    ydl = yt_dlp.YoutubeDL(ydl_opts)
     info = ydl.extract_info(Globals.library['Playlists'][url]['url'] if url in Globals.library['Playlists'] else url,
                             download=False,
                             process=mode == 'metadata')

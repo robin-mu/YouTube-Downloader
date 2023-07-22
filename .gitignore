@@ -5,3 +5,9 @@
 /.vs
 /out
 /backups
+/w.py
+/tests
+/releases
+/.idea
+/library.json
+/files_keep.json

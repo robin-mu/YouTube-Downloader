@@ -32,7 +32,7 @@ Hint: You can shift-click any checkbox to check all boxes between the selected b
 All metadata you choose gets saved to a `metadata.json` file and gets added to the suggestions if you download that video again.
 
 ## External Modules Used
-- [YouTube-DL](https://github.com/ytdl-org/youtube-dl) for downloading videos from YouTube
+- [yt-dlp](https://github.com/yt-dlp/yt-dlp) for downloading videos from YouTube
 - [Mutagen](https://github.com/quodlibet/mutagen) for setting metadata in MP3 files
 - [pydub](https://github.com/jiaaro/pydub) for getting the samplerate of an MP3 file
 - [send2trash](https://pypi.org/project/Send2Trash/) to move files to the trash
