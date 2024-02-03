@@ -26,8 +26,6 @@ from send2trash import send2trash
 import requests
 import syncedlyrics
 
-test
-
 # change current working directory to script location
 os.chdir(os.path.dirname(os.path.realpath(__file__)))
 
@@ -653,7 +651,8 @@ class MetadataSelection:
 
 
 class LibraryList:
-    def __init__(self, root: tkinter.Widget, library_key: str, data: dict[str, str | dict[str, dict[str, str]]], row: int):
+    def __init__(self, root: tkinter.Widget, library_key: str, data: dict[str, str | dict[str, dict[str, str]]],
+                 row: int):
         self.root = root
         self.library_key = library_key
         self.base_folder = data['base_folder']
@@ -741,7 +740,8 @@ class LibraryList:
         self.library_values[2].set(synced)
 
         videos = list(self.library_values[1].get())
-        videos[i] = f'Playlist: {len(playlist_ids)}, Downloaded: {len([e for e in playlist_ids if e in downloaded_ids])}, in Folder: {len(downloaded_ids)}'
+        videos[
+            i] = f'Playlist: {len(playlist_ids)}, Downloaded: {len([e for e in playlist_ids if e in downloaded_ids])}, in Folder: {len(downloaded_ids)}'
         self.library_values[1].set(videos)
 
     def library_refresh(self, simulate: bool = True):
@@ -789,7 +789,8 @@ class LibraryList:
                     video_info = ydl.extract_info(list(info['entries'])[0]['url'], process=False)
                     if 'artist' in video_info:
                         title = video_info['artist'].split(',')[0] + ' - ' + title.strip('Album - ')
-                self.playlists[title] = {'url': url, 'folder': os.path.join(self.base_folder, safe_filename(title)), 'metadata_mode': self.default_mode}
+                self.playlists[title] = {'url': url, 'folder': os.path.join(self.base_folder, safe_filename(title)),
+                                         'metadata_mode': self.default_mode}
             except yt_dlp.DownloadError as e:
                 Globals.app.print_info('playlist', e)
 
@@ -854,7 +855,8 @@ class LibraryList:
         self.library_refresh(simulate=False)
 
     def get_data(self) -> dict[str, dict[str, str | dict[str, dict[str, str]]]]:
-        return {self.library_key: {'base_folder': self.base_folder, 'default_mode': self.default_mode, 'playlists': self.playlists}}
+        return {self.library_key: {'base_folder': self.base_folder, 'default_mode': self.default_mode,
+                                   'playlists': self.playlists}}
 
 
 class App:
@@ -942,7 +944,8 @@ class App:
         # download widgets
         self.url_label = ttk.Label(self.download_frame,
                                    text='Input video/playlist URL, search query or saved URL name:')
-        self.url_combobox = ttk.Combobox(self.download_frame, values=list(Globals.library['Playlists']['playlists'].keys()),
+        self.url_combobox = ttk.Combobox(self.download_frame,
+                                         values=list(Globals.library['Playlists']['playlists'].keys()),
                                          textvariable=self.url_variable)
         self.save_url_button = ttk.Button(self.download_frame, text='Save...', command=self.save_url)
         self.output_folder_label = ttk.Label(self.download_frame, textvariable=self.output_folder_variable,
@@ -988,7 +991,8 @@ class App:
         self.library_tab = ttk.Frame()
         self.notebook.add(self.library_tab, text='Library')
 
-        self.library = [LibraryList(self.library_tab, key, data, i) for i, (key, data) in enumerate(Globals.library.items())]
+        self.library = [LibraryList(self.library_tab, key, data, i) for i, (key, data) in
+                        enumerate(Globals.library.items())]
 
         # widget events
         self.url_variable.trace_add('write', self.url_combobox_write)
@@ -1127,7 +1131,8 @@ class App:
         if not url:
             return
 
-        url = Globals.library['Playlists']['playlists'][url]['url'] if url in Globals.library['Playlists']['playlists'] else url
+        url = Globals.library['Playlists']['playlists'][url]['url'] if url in Globals.library['Playlists'][
+            'playlists'] else url
 
         # disable download widgets
         self.disable_download_widgets()
@@ -1209,7 +1214,7 @@ class App:
                                      prompt='Input the name under which to save the URL and settings:')
         if url:
             Globals.library['Playlists']['playlists'][url] = {'url': self.url_combobox.get(), 'folder': Globals.folder,
-                                                 'metadata_mode': self.metadata_mode.get()}
+                                                              'metadata_mode': self.metadata_mode.get()}
         self.url_combobox['values'] = list(Globals.library['Playlists']['playlists'].keys())
 
     def select_output_folder(self):
@@ -1533,8 +1538,9 @@ def download(urls: dict[str, dict[str, str]], simulate: bool = False, sync_callb
                     except OSError as e:
                         Globals.app.print_info('sync', e)
 
-    Globals.app.update_progress(total_length, f"Downloaded {len(Globals.files)} video{'s' if len(Globals.files) != 1 else ''} (%.1f%%) in "
-                                   f"{sec_to_min((datetime.now() - start).seconds)}")
+    Globals.app.update_progress(total_length,
+                                f"Downloaded {len(Globals.files)} video{'s' if len(Globals.files) != 1 else ''} (%.1f%%) in "
+                                f"{sec_to_min((datetime.now() - start).seconds)}")
 
     # reactivate windows sleep mode
     ctypes.windll.kernel32.SetThreadExecutionState(0x80000000)
@@ -1558,9 +1564,11 @@ def download_metadata():
     }
 
     ydl = yt_dlp.YoutubeDL(ydl_opts)
-    info = ydl.extract_info(Globals.library['Playlists']['playlists'][url]['url'] if url in Globals.library['Playlists']['playlists'] else url,
-                            download=False,
-                            process=mode == 'metadata')
+    info = ydl.extract_info(
+        Globals.library['Playlists']['playlists'][url]['url'] if url in Globals.library['Playlists'][
+            'playlists'] else url,
+        download=False,
+        process=mode == 'metadata')
 
     if info:
         # mode dependent actions
