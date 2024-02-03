@@ -26,6 +26,8 @@ from send2trash import send2trash
 import requests
 import syncedlyrics
 
+test
+
 # change current working directory to script location
 os.chdir(os.path.dirname(os.path.realpath(__file__)))
 
